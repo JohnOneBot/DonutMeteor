@@ -11,6 +11,7 @@ import net.minecraft.world.RaycastContext;
 
 public final class FreecamMiningState {
     private static final double VANILLA_REACH = 4.5;
+    private static final int AIR_CONFIRM_TICKS = 4;
 
     private static boolean active;
     private static float lockedYaw;
@@ -19,6 +20,8 @@ public final class FreecamMiningState {
     private static Vec3d lockedRayOrigin;
     private static HitResult storedHit;
     private static BlockPos storedBlockPos;
+    private static BlockPos airCandidatePos;
+    private static int airCandidateTicks;
     private static Direction progressionDirection;
     private static Object autoMineTarget;
 
@@ -33,6 +36,8 @@ public final class FreecamMiningState {
         lockedRayOrigin = null;
         storedHit = hit;
         autoMineTarget = targetSnapshot;
+        airCandidatePos = null;
+        airCandidateTicks = 0;
         updateStoredBlockPos(hit);
         progressionDirection = resolveProgressionDirection(hit, yaw, pitch);
     }
@@ -43,13 +48,15 @@ public final class FreecamMiningState {
         lockedRayOrigin = null;
         storedHit = null;
         storedBlockPos = null;
+        airCandidatePos = null;
+        airCandidateTicks = 0;
         progressionDirection = null;
         autoMineTarget = null;
     }
 
     /**
-     * Uses vanilla reach, but advances a virtual ray origin as blocks are mined so targeting can continue indefinitely.
-     * Direction is snapped to block direction to avoid drifting up/down from tiny pitch changes.
+     * Uses vanilla reach and advances a virtual ray origin when blocks are confirmed gone.
+     * Confirmation delay helps avoid marching forward on lag/rubber-band ghost breaks.
      */
     public static void refreshLockedRaycast(MinecraftClient mc) {
         if (!active || mc == null || mc.world == null || mc.player == null || lockedPos == null) return;
@@ -63,18 +70,22 @@ public final class FreecamMiningState {
             lockedRayOrigin = new Vec3d(lockedPos.x, eyeY, lockedPos.z);
         }
 
-        // If current target was mined (air), march the virtual origin forward so next blocks stay in vanilla reach.
-        int marchCount = 0;
-        while (storedBlockPos != null
-            && mc.world.getBlockState(storedBlockPos).isAir()
-            && marchCount < 64) {
-            lockedRayOrigin = lockedRayOrigin.add(direction);
-            marchCount++;
+        // Only move forward after seeing the same target block as air for several ticks.
+        if (storedBlockPos != null && mc.world.getBlockState(storedBlockPos).isAir()) {
+            if (storedBlockPos.equals(airCandidatePos)) airCandidateTicks++;
+            else {
+                airCandidatePos = storedBlockPos;
+                airCandidateTicks = 1;
+            }
 
-            // Refresh target check from new origin.
-            Vec3d marchEnd = lockedRayOrigin.add(direction.multiply(VANILLA_REACH));
-            HitResult marchHit = mc.world.raycast(new RaycastContext(lockedRayOrigin, marchEnd, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, mc.player));
-            updateStoredBlockPos(marchHit);
+            if (airCandidateTicks >= AIR_CONFIRM_TICKS) {
+                lockedRayOrigin = lockedRayOrigin.add(direction);
+                airCandidatePos = null;
+                airCandidateTicks = 0;
+            }
+        } else {
+            airCandidatePos = null;
+            airCandidateTicks = 0;
         }
 
         Vec3d end = lockedRayOrigin.add(direction.multiply(VANILLA_REACH));
@@ -129,6 +140,10 @@ public final class FreecamMiningState {
 
     public static BlockPos getStoredBlockPos() {
         return storedBlockPos;
+    }
+
+    public static Direction getProgressionDirection() {
+        return progressionDirection;
     }
 
     public static Object getAutoMineTarget() {
