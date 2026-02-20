@@ -1,7 +1,6 @@
 package com.example.addon.mixin;
 
 import com.example.addon.modules.FreecamPlus;
-import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.network.ClientPlayerInteractionManager;
 import net.minecraft.util.math.BlockPos;
 import org.spongepowered.asm.mixin.Mixin;
@@ -20,8 +19,13 @@ public abstract class FreecamBlockBreakMixin {
      */
     @Inject(method = "method_30287", at = @At("HEAD"), cancellable = true)
     private void onBlockBreakProgress(BlockPos pos, CallbackInfo ci) {
-        FreecamPlus freecamPlus = Modules.get().get(FreecamPlus.class);
-        if (freecamPlus != null && freecamPlus.isActive()) {
+        // If FreecamPlus is active and has a locked target, only allow breaking that target
+        if (FreecamPlus.isFreecamPlusActive && FreecamPlus.targetBlock != null) {
+            if (!pos.equals(FreecamPlus.targetBlock)) {
+                ci.cancel();
+            }
+        } else if (FreecamPlus.isFreecamPlusActive) {
+            // If active but no locked target, cancel generic breaking
             ci.cancel();
         }
     }
@@ -31,8 +35,12 @@ public abstract class FreecamBlockBreakMixin {
      */
     @Inject(method = "method_30289", at = @At("HEAD"), cancellable = true)
     private void onAttackBlock(BlockPos pos, CallbackInfo ci) {
-        FreecamPlus freecamPlus = Modules.get().get(FreecamPlus.class);
-        if (freecamPlus != null && freecamPlus.isActive()) {
+        // Same logic for direct attack/clicks: only allow attacks on the locked target
+        if (FreecamPlus.isFreecamPlusActive && FreecamPlus.targetBlock != null) {
+            if (!pos.equals(FreecamPlus.targetBlock)) {
+                ci.cancel();
+            }
+        } else if (FreecamPlus.isFreecamPlusActive) {
             ci.cancel();
         }
     }
