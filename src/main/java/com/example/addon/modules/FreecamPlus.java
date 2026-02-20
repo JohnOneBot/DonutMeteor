@@ -44,7 +44,7 @@ public class FreecamPlus extends Module {
             // Save player's current rotation
             lockedYaw = mc.player.getYaw();
             lockedPitch = mc.player.getPitch();
-            storedPlayerPos = mc.player.getPos();
+            storedPlayerPos = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
             
             // Find what block the player is looking at
             Vec3d eyePos = mc.player.getEyePos();
