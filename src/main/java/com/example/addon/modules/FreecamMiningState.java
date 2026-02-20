@@ -92,10 +92,14 @@ public final class FreecamMiningState {
     private static Direction resolveProgressionDirection(HitResult hit, float yaw, float pitch) {
         if (hit instanceof BlockHitResult blockHit) return blockHit.getSide().getOpposite();
 
-        // Prevent accidental vertical drift for almost-level mining lines.
-        if (Math.abs(pitch) <= 20f) return Direction.fromRotation(yaw);
+        Vec3d look = Vec3d.fromPolar(pitch, yaw);
 
-        return Direction.getFacing(Vec3d.fromPolar(pitch, yaw).x, Vec3d.fromPolar(pitch, yaw).y, Vec3d.fromPolar(pitch, yaw).z);
+        // Prevent accidental vertical drift for almost-level mining lines.
+        if (Math.abs(pitch) <= 20f) {
+            return Direction.getFacing(look.x, 0.0, look.z);
+        }
+
+        return Direction.getFacing(look.x, look.y, look.z);
     }
 
     private static void updateStoredBlockPos(HitResult hit) {
