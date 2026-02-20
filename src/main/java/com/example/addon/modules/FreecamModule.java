@@ -9,6 +9,7 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.Vec3d;
 
 /**
  * Detaches the camera while keeping mining logic locked to the original player aim.
@@ -34,12 +35,15 @@ public class FreecamModule extends Module {
         if (mc.player == null) return;
 
         HitResult hit = mc.crosshairTarget;
-        if (hit == null) hit = BlockHitResult.createMissed(mc.player.getPos(), mc.player.getHorizontalFacing(), mc.player.getBlockPos());
+        if (hit == null) {
+            Vec3d eyePos = new Vec3d(mc.player.getX(), mc.player.getEyeY(), mc.player.getZ());
+            hit = BlockHitResult.createMissed(eyePos, mc.player.getHorizontalFacing(), mc.player.getBlockPos());
+        }
 
         FreecamMiningState.activate(
             mc.player.getYaw(),
             mc.player.getPitch(),
-            mc.player.getPos(),
+            new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ()),
             hit,
             null
         );
