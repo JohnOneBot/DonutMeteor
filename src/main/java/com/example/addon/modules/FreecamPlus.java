@@ -77,7 +77,7 @@ public class FreecamPlus extends Module {
         }
 
         // Save current state
-        savedPosition = mc.player.getPos().copy();
+        savedPosition = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
         savedYaw = mc.player.getYaw();
         savedPitch = mc.player.getPitch();
 
