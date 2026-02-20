@@ -10,16 +10,16 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 
 public final class FreecamMiningState {
-    // Long raycast distance so locked targeting can continue past the first few mined blocks.
-    // Using vanilla reach (~4.5-5) causes mining to stall after a short line.
-    private static final double LOCKED_REACH = 128.0;
+    private static final double VANILLA_REACH = 4.5;
 
     private static boolean active;
     private static float lockedYaw;
     private static float lockedPitch;
     private static Vec3d lockedPos;
+    private static Vec3d lockedRayOrigin;
     private static HitResult storedHit;
     private static BlockPos storedBlockPos;
+    private static Direction progressionDirection;
     private static Object autoMineTarget;
 
     private FreecamMiningState() {
@@ -30,40 +30,72 @@ public final class FreecamMiningState {
         lockedYaw = yaw;
         lockedPitch = pitch;
         lockedPos = position;
+        lockedRayOrigin = null;
         storedHit = hit;
         autoMineTarget = targetSnapshot;
         updateStoredBlockPos(hit);
+        progressionDirection = resolveProgressionDirection(hit, yaw, pitch);
     }
 
     public static void deactivate() {
         active = false;
         lockedPos = null;
+        lockedRayOrigin = null;
         storedHit = null;
         storedBlockPos = null;
+        progressionDirection = null;
         autoMineTarget = null;
     }
 
     /**
-     * Rebuilds crosshair hit from the original locked player location + locked rotation.
-     * This keeps AutoMine advancing to the next block in the same line after a block breaks.
+     * Uses vanilla reach, but advances a virtual ray origin as blocks are mined so targeting can continue indefinitely.
+     * Direction is snapped to block direction to avoid drifting up/down from tiny pitch changes.
      */
     public static void refreshLockedRaycast(MinecraftClient mc) {
         if (!active || mc == null || mc.world == null || mc.player == null || lockedPos == null) return;
 
-        double eyeY = lockedPos.y + mc.player.getEyeHeight(mc.player.getPose());
-        Vec3d start = new Vec3d(lockedPos.x, eyeY, lockedPos.z);
-        Vec3d direction = Vec3d.fromPolar(lockedPitch, lockedYaw);
-        Vec3d end = start.add(direction.multiply(LOCKED_REACH));
+        if (progressionDirection == null) progressionDirection = resolveProgressionDirection(storedHit, lockedYaw, lockedPitch);
 
+        Vec3d direction = Vec3d.of(progressionDirection.getVector());
+
+        if (lockedRayOrigin == null) {
+            double eyeY = lockedPos.y + mc.player.getEyeHeight(mc.player.getPose());
+            lockedRayOrigin = new Vec3d(lockedPos.x, eyeY, lockedPos.z);
+        }
+
+        // If current target was mined (air), march the virtual origin forward so next blocks stay in vanilla reach.
+        int marchCount = 0;
+        while (storedBlockPos != null
+            && mc.world.getBlockState(storedBlockPos).isAir()
+            && marchCount < 64) {
+            lockedRayOrigin = lockedRayOrigin.add(direction);
+            marchCount++;
+
+            // Refresh target check from new origin.
+            Vec3d marchEnd = lockedRayOrigin.add(direction.multiply(VANILLA_REACH));
+            HitResult marchHit = mc.world.raycast(new RaycastContext(lockedRayOrigin, marchEnd, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, mc.player));
+            updateStoredBlockPos(marchHit);
+        }
+
+        Vec3d end = lockedRayOrigin.add(direction.multiply(VANILLA_REACH));
         Entity entity = mc.player;
-        HitResult hit = mc.world.raycast(new RaycastContext(start, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, entity));
+        HitResult hit = mc.world.raycast(new RaycastContext(lockedRayOrigin, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, entity));
 
-        if (hit == null) {
-            hit = BlockHitResult.createMissed(end, Direction.getFacing(direction.x, direction.y, direction.z), BlockPos.ofFloored(end));
+        if (!(hit instanceof BlockHitResult)) {
+            hit = BlockHitResult.createMissed(end, progressionDirection, BlockPos.ofFloored(end));
         }
 
         storedHit = hit;
         updateStoredBlockPos(hit);
+    }
+
+    private static Direction resolveProgressionDirection(HitResult hit, float yaw, float pitch) {
+        if (hit instanceof BlockHitResult blockHit) return blockHit.getSide().getOpposite();
+
+        // Prevent accidental vertical drift for almost-level mining lines.
+        if (Math.abs(pitch) <= 20f) return Direction.fromRotation(yaw);
+
+        return Direction.getFacing(Vec3d.fromPolar(pitch, yaw).x, Vec3d.fromPolar(pitch, yaw).y, Vec3d.fromPolar(pitch, yaw).z);
     }
 
     private static void updateStoredBlockPos(HitResult hit) {
