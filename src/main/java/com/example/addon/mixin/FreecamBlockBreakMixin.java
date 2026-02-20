@@ -18,7 +18,7 @@ public abstract class FreecamBlockBreakMixin {
     /**
      * Prevent block breaking when Freecam+ is active.
      */
-    @Inject(method = "updateBlockBreakingProgress", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "method_30287", at = @At("HEAD"), cancellable = true)
     private void onBlockBreakProgress(BlockPos pos, CallbackInfo ci) {
         FreecamPlus freecamPlus = Modules.get().get(FreecamPlus.class);
         if (freecamPlus != null && freecamPlus.isActive()) {
@@ -29,7 +29,7 @@ public abstract class FreecamBlockBreakMixin {
     /**
      * Prevent clicking blocks to break them when Freecam+ is active.
      */
-    @Inject(method = "attackBlock", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "method_30289", at = @At("HEAD"), cancellable = true)
     private void onAttackBlock(BlockPos pos, CallbackInfo ci) {
         FreecamPlus freecamPlus = Modules.get().get(FreecamPlus.class);
         if (freecamPlus != null && freecamPlus.isActive()) {
