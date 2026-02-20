@@ -96,6 +96,12 @@ public class FreecamPlus extends Module {
             mc.player.setYaw(lockedYaw);
             mc.player.setPitch(lockedPitch);
         }
+
+        // Spoof the client's crosshair target so AutoMine and other modules
+        // that read `client.crosshairTarget` keep the original target while freecam is active.
+        if (isFreecamPlusActive && storedHit != null) {
+            mc.crosshairTarget = storedHit;
+        }
     }
 }
 

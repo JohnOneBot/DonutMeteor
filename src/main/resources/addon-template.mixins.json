@@ -5,8 +5,7 @@
   "client": [
     "ExampleMixin",
     "FreecamBlockBreakMixin",
-    "PlayerAttackMixin",
-    "GameRendererMixin"
+    "PlayerAttackMixin"
   ],
   "injectors": {
     "defaultRequire": 1
