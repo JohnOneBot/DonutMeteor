@@ -10,7 +10,9 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 
 public final class FreecamMiningState {
-    private static final double LOCKED_REACH = 5.0;
+    // Long raycast distance so locked targeting can continue past the first few mined blocks.
+    // Using vanilla reach (~4.5-5) causes mining to stall after a short line.
+    private static final double LOCKED_REACH = 128.0;
 
     private static boolean active;
     private static float lockedYaw;
