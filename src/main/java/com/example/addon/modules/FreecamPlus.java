@@ -1,185 +1,142 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
-import meteordevelopment.meteorclient.events.game.GameLeftEvent;
-import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.events.world.TickEvent.Post;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.systems.modules.render.Freecam;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.RaycastContext;
 
 /**
- * Freecam+ module that allows free camera movement while locking player position.
- * Unlike normal freecam, this won't break blocks and keeps the player locked in place.
- * Perfect for surveying mining positions without disrupting your mining operation.
+ * Freecam+ module that allows free camera movement while mining.
+ * Toggles the built-in Freecam module and auto-mines the block you're looking at.
+ * Suppresses auto-walk and other movement modules so they don't interfere with camera.
  */
 public class FreecamPlus extends Module {
+    private final MinecraftClient mc = MinecraftClient.getInstance();
+    private final Freecam freecam;
     private final SettingGroup sgGeneral = this.settings.getDefaultGroup();
-
-    private final Setting<Double> speed = sgGeneral.add(new DoubleSetting.Builder()
-        .name("speed")
-        .description("Camera movement speed multiplier.")
-        .defaultValue(0.5)
-        .range(0.1, 2.0)
-        .sliderRange(0.1, 2.0)
+    
+    private final Setting<Double> reach = sgGeneral.add(new DoubleSetting.Builder()
+        .name("reach")
+        .description("Mining reach from real player position.")
+        .defaultValue(5.0)
+        .min(1.0)
+        .max(6.0)
+        .sliderRange(1.0, 6.0)
         .build()
     );
-
-    private final Setting<Double> mouseSensitivity = sgGeneral.add(new DoubleSetting.Builder()
-        .name("mouse-sensitivity")
-        .description("How fast the camera rotates with mouse movement.")
-        .defaultValue(1.0)
-        .range(0.1, 3.0)
-        .sliderRange(0.1, 3.0)
-        .build()
-    );
-
-    private final Setting<Boolean> requireSneaking = sgGeneral.add(new BoolSetting.Builder()
-        .name("require-sneaking")
-        .description("Only allow freecam while sneaking.")
-        .defaultValue(false)
-        .build()
-    );
-
-    // State
-    private Vec3d savedPosition;
-    private float savedYaw;
-    private float savedPitch;
-    private Vec3d cameraPos;
-    private float cameraYaw;
-    private float cameraPitch;
-    private double lastMouseX;
-    private double lastMouseY;
 
     public FreecamPlus() {
-        super(AddonTemplate.CATEGORY, "freecam-plus", "Free camera that locks your mining position without breaking blocks.");
-    }
-
-    @Override
-    public void onDeactivate() {
-        // Restore player state
-        if (mc.player != null) {
-            mc.player.setPosition(savedPosition);
-            mc.player.setYaw(savedYaw);
-            mc.player.setPitch(savedPitch);
-        }
-        cameraPos = null;
+        super(AddonTemplate.CATEGORY, "freecam-plus", "Freecam with real-position mining. Suppresses auto-walk so it doesn't move your freecam.");
+        this.freecam = (Freecam) Modules.get().get(Freecam.class);
     }
 
     @Override
     public void onActivate() {
-        if (mc.player == null || mc.world == null) {
-            toggle();
-            return;
+        if (freecam != null && !freecam.isActive()) {
+            freecam.toggle();
+            this.info("Freecam activated for mining.");
         }
+        // Ensure attack key is not stuck when enabling
+        KeyBinding.setKeyPressed(mc.options.attackKey.getDefaultKey(), false);
+        releaseMovementKeys();
+    }
 
-        // Save current state
-        savedPosition = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
-        savedYaw = mc.player.getYaw();
-        savedPitch = mc.player.getPitch();
-
-        // Initialize camera
-        cameraPos = savedPosition.add(0, mc.player.getEyeHeight(mc.player.getPose()), 0);
-        cameraYaw = savedYaw;
-        cameraPitch = savedPitch;
+    @Override
+    public void onDeactivate() {
+        // Release attack key when module is disabled
+        KeyBinding.setKeyPressed(mc.options.attackKey.getDefaultKey(), false);
         
-        lastMouseX = mc.mouse.getX();
-        lastMouseY = mc.mouse.getY();
+        if (freecam != null && freecam.isActive()) {
+            freecam.toggle();
+            this.info("Freecam deactivated.");
+        }
     }
 
     @EventHandler
-    private void onTick(TickEvent.Post event) {
-        if (mc.player == null || mc.world == null) {
-            if (isActive()) toggle();
+    private void onTick(Post event) {
+        if (mc.player == null || mc.world == null || mc.interactionManager == null) {
             return;
         }
 
-        // Check if we should disable
-        if (requireSneaking.get() && !mc.player.isSneaking()) {
-            toggle();
-            return;
+        ClientPlayerEntity player = mc.player;
+        
+        // Suppress auto-walk and other movement modules
+        suppressMovementInput();
+        
+        Vec3d eyePos = player.getEyePos();
+        float yaw = player.getYaw();
+        float pitch = player.getPitch();
+        
+        // Calculate look direction vector from yaw and pitch
+        Vec3d lookVec = new Vec3d(
+            -Math.sin(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch)),
+            -Math.sin(Math.toRadians(pitch)),
+            Math.cos(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch))
+        );
+        
+        // Calculate target position based on reach
+        Vec3d targetVec = eyePos.add(lookVec.multiply(reach.get()));
+        
+        // Perform raycast from eye position to target
+        HitResult ray = mc.world.raycast(
+            new RaycastContext(eyePos, targetVec, RaycastContext.ShapeType.OUTLINE, 
+                RaycastContext.FluidHandling.NONE, player)
+        );
+        
+        // If we hit a block, hold attack to mine it continuously
+        if (ray.getType() == HitResult.Type.BLOCK) {
+            BlockHitResult blockHit = (BlockHitResult) ray;
+            BlockPos targetPos = blockHit.getBlockPos();
+            
+            // Hold attack key and update breaking progress for continuous mining
+            KeyBinding.setKeyPressed(mc.options.attackKey.getDefaultKey(), true);
+            mc.interactionManager.updateBlockBreakingProgress(targetPos, blockHit.getSide());
+        } else {
+            // Release attack when not targeting a block
+            KeyBinding.setKeyPressed(mc.options.attackKey.getDefaultKey(), false);
         }
-
-        // Lock player position and prevent any movement
-        mc.player.setPosition(savedPosition);
-        mc.player.setVelocity(Vec3d.ZERO);
-        mc.player.fallDistance = 0;
     }
 
-    @EventHandler
-    private void onTick2(TickEvent.Pre event) {
-        if (mc.player == null) return;
-
-        // Handle mouse-based camera rotation
-        double mouseX = mc.mouse.getX();
-        double mouseY = mc.mouse.getY();
-        
-        double deltaX = (mouseX - lastMouseX) * 0.15 * mouseSensitivity.get();
-        double deltaY = (mouseY - lastMouseY) * 0.15 * mouseSensitivity.get();
-        
-        cameraYaw -= (float) deltaX;
-        cameraPitch += (float) deltaY;
-        
-        // Clamp pitch
-        if (cameraPitch > 90.0f) cameraPitch = 90.0f;
-        if (cameraPitch < -90.0f) cameraPitch = -90.0f;
-        
-        lastMouseX = mouseX;
-        lastMouseY = mouseY;
-
-        // Handle keyboard-based camera movement
-        handleCameraInput();
-
-        // Update player rotation to match camera (for appearance)
-        mc.player.setYaw(cameraYaw);
-        mc.player.setPitch(cameraPitch);
-
-        // Prevent any velocity
-        mc.player.setVelocity(Vec3d.ZERO);
+    /**
+     * Release all movement keys to prevent them from affecting freecam
+     */
+    private void releaseMovementKeys() {
+        KeyBinding.setKeyPressed(mc.options.forwardKey.getDefaultKey(), false);
+        KeyBinding.setKeyPressed(mc.options.backKey.getDefaultKey(), false);
+        KeyBinding.setKeyPressed(mc.options.leftKey.getDefaultKey(), false);
+        KeyBinding.setKeyPressed(mc.options.rightKey.getDefaultKey(), false);
+        KeyBinding.setKeyPressed(mc.options.jumpKey.getDefaultKey(), false);
+        KeyBinding.setKeyPressed(mc.options.sneakKey.getDefaultKey(), false);
     }
 
-    private void handleCameraInput() {
-        if (mc.player == null) return;
-
-        // Get camera direction vectors
-        double forward = 0;
-        double strafe = 0;
-        double vertical = 0;
-
-        // Handle input
-        if (mc.options.forwardKey.isPressed()) forward += 1;
-        if (mc.options.backKey.isPressed()) forward -= 1;
-        if (mc.options.rightKey.isPressed()) strafe += 1;
-        if (mc.options.leftKey.isPressed()) strafe -= 1;
-        if (mc.options.jumpKey.isPressed()) vertical += 1;
-        if (mc.options.sneakKey.isPressed()) vertical -= 1;
-
-        if (forward == 0 && strafe == 0 && vertical == 0) return;
-
-        // Calculate movement direction based on camera rotation
-        float yawRad = (float) Math.toRadians(cameraYaw);
-        float pitchRad = (float) Math.toRadians(cameraPitch);
-
-        double cos = Math.cos(yawRad);
-        double sin = Math.sin(yawRad);
-        double cosPitch = Math.cos(pitchRad);
-        double sinPitch = Math.sin(pitchRad);
-
-        double moveX = (strafe * cos + forward * sin * cosPitch) * speed.get();
-        double moveY = (vertical - forward * sinPitch) * speed.get();
-        double moveZ = (forward * cos * cosPitch - strafe * sin) * speed.get();
-
-        cameraPos = cameraPos.add(moveX, moveY, moveZ);
-    }
-
-    @EventHandler
-    private void onGameLeft(GameLeftEvent event) {
-        // Disable when leaving world
-        if (isActive()) {
-            toggle();
+    /**
+     * Suppress movement input to prevent auto-walk and other modules from moving freecam
+     */
+    private void suppressMovementInput() {
+        // Get current key states
+        boolean forward = mc.options.forwardKey.isPressed();
+        boolean back = mc.options.backKey.isPressed();
+        boolean left = mc.options.leftKey.isPressed();
+        boolean right = mc.options.rightKey.isPressed();
+        boolean jump = mc.options.jumpKey.isPressed();
+        boolean sneak = mc.options.sneakKey.isPressed();
+        
+        // If any movement key is pressed, override it to prevent auto-walk interference
+        if (forward || back || left || right || jump || sneak) {
+            releaseMovementKeys();
         }
     }
 }
