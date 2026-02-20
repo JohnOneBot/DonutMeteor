@@ -1,8 +1,6 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
-import meteordevelopment.meteorclient.events.entity.player.PlayerUpdateEvent;
-import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
@@ -79,7 +77,7 @@ public class FreecamPlus extends Module {
         }
 
         // Save current state
-        savedPosition = mc.player.getPos();
+        savedPosition = mc.player.getPos().copy();
         savedYaw = mc.player.getYaw();
         savedPitch = mc.player.getPitch();
 
@@ -112,7 +110,7 @@ public class FreecamPlus extends Module {
     }
 
     @EventHandler
-    private void onPlayerUpdate(PlayerUpdateEvent event) {
+    private void onTick2(TickEvent.Pre event) {
         if (mc.player == null) return;
 
         // Handle mouse-based camera rotation
