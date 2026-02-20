@@ -27,7 +27,9 @@ public class FreecamPlus extends Module {
     
     // Public static so mixin can access it
     public static BlockPos targetBlock = null;
+    public static HitResult storedHit = null;
     public static boolean isFreecamPlusActive = false;
+    public static Vec3d storedPlayerPos = null;
 
     public FreecamPlus() {
         super(AddonTemplate.CATEGORY, "freecam-plus", "Freecam that locks on to your target block. Perfect for AFK mining.");
@@ -42,6 +44,7 @@ public class FreecamPlus extends Module {
             // Save player's current rotation
             lockedYaw = mc.player.getYaw();
             lockedPitch = mc.player.getPitch();
+            storedPlayerPos = mc.player.getPos();
             
             // Find what block the player is looking at
             Vec3d eyePos = mc.player.getEyePos();
@@ -58,6 +61,9 @@ public class FreecamPlus extends Module {
                 )
             );
             
+            // Save the full hit result (so crosshairTarget can be spoofed)
+            storedHit = hit;
+
             // Save the block position if we're looking at one
             if (hit instanceof BlockHitResult blockHit) {
                 targetBlock = blockHit.getBlockPos();
@@ -75,6 +81,8 @@ public class FreecamPlus extends Module {
     public void onDeactivate() {
         isFreecamPlusActive = false;
         targetBlock = null;
+        storedHit = null;
+        storedPlayerPos = null;
         
         if (freecam != null && freecam.isActive()) {
             freecam.toggle();

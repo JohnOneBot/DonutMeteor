@@ -3,7 +3,10 @@
   "package": "com.example.addon.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "ExampleMixin"
+    "ExampleMixin",
+    "FreecamBlockBreakMixin",
+    "PlayerAttackMixin",
+    "GameRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1
