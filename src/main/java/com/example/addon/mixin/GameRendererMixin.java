@@ -19,8 +19,11 @@ public abstract class GameRendererMixin {
      */
     @Inject(method = "updateCrosshairTarget", at = @At("RETURN"))
     private void lockCrosshairTarget(float tickDelta, CallbackInfo ci) {
-        if (FreecamMiningState.isActive() && FreecamMiningState.getStoredHit() != null) {
-            client.crosshairTarget = FreecamMiningState.getStoredHit();
+        if (FreecamMiningState.isActive()) {
+            FreecamMiningState.refreshLockedRaycast(client);
+            if (FreecamMiningState.getStoredHit() != null) {
+                client.crosshairTarget = FreecamMiningState.getStoredHit();
+            }
         }
     }
 }

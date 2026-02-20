@@ -70,7 +70,10 @@ public class FreecamModule extends Module {
         mc.player.setYaw(FreecamMiningState.getLockedYaw());
         mc.player.setPitch(FreecamMiningState.getLockedPitch());
 
-        // Keep AutoMine-facing logic pinned to the originally targeted block.
+        // Recalculate the locked-player raycast so mining can advance to the next block in-line.
+        FreecamMiningState.refreshLockedRaycast(mc);
+
+        // Keep AutoMine-facing logic pinned to the locked-player raycast (not detached camera).
         mc.crosshairTarget = FreecamMiningState.getStoredHit();
     }
 

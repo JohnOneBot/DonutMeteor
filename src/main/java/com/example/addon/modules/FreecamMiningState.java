@@ -1,11 +1,17 @@
 package com.example.addon.modules;
 
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.entity.Entity;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.RaycastContext;
 
 public final class FreecamMiningState {
+    private static final double LOCKED_REACH = 5.0;
+
     private static boolean active;
     private static float lockedYaw;
     private static float lockedPitch;
@@ -24,9 +30,7 @@ public final class FreecamMiningState {
         lockedPos = position;
         storedHit = hit;
         autoMineTarget = targetSnapshot;
-
-        if (hit instanceof BlockHitResult blockHit) storedBlockPos = blockHit.getBlockPos();
-        else storedBlockPos = null;
+        updateStoredBlockPos(hit);
     }
 
     public static void deactivate() {
@@ -35,6 +39,34 @@ public final class FreecamMiningState {
         storedHit = null;
         storedBlockPos = null;
         autoMineTarget = null;
+    }
+
+    /**
+     * Rebuilds crosshair hit from the original locked player location + locked rotation.
+     * This keeps AutoMine advancing to the next block in the same line after a block breaks.
+     */
+    public static void refreshLockedRaycast(MinecraftClient mc) {
+        if (!active || mc == null || mc.world == null || mc.player == null || lockedPos == null) return;
+
+        double eyeY = lockedPos.y + mc.player.getEyeHeight(mc.player.getPose());
+        Vec3d start = new Vec3d(lockedPos.x, eyeY, lockedPos.z);
+        Vec3d direction = Vec3d.fromPolar(lockedPitch, lockedYaw);
+        Vec3d end = start.add(direction.multiply(LOCKED_REACH));
+
+        Entity entity = mc.player;
+        HitResult hit = mc.world.raycast(new RaycastContext(start, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, entity));
+
+        if (hit == null) {
+            hit = BlockHitResult.createMissed(end, Direction.getFacing(direction.x, direction.y, direction.z), BlockPos.ofFloored(end));
+        }
+
+        storedHit = hit;
+        updateStoredBlockPos(hit);
+    }
+
+    private static void updateStoredBlockPos(HitResult hit) {
+        if (hit instanceof BlockHitResult blockHit) storedBlockPos = blockHit.getBlockPos();
+        else storedBlockPos = null;
     }
 
     public static boolean isActive() {
