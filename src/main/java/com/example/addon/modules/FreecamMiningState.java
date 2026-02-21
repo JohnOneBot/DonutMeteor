@@ -142,6 +142,23 @@ public final class FreecamMiningState {
         return lockedPos;
     }
 
+    public static void syncPlayerPosition(Vec3d currentPlayerPos) {
+        if (!active || currentPlayerPos == null) return;
+
+        if (lockedPos == null) {
+            lockedPos = currentPlayerPos;
+            return;
+        }
+
+        Vec3d delta = currentPlayerPos.subtract(lockedPos);
+        if (delta.lengthSquared() <= 1.0e-8) return;
+
+        lockedPos = currentPlayerPos;
+
+        // Keep the virtual ray origin aligned with player movement to reduce server-side view desync.
+        if (lockedRayOrigin != null) lockedRayOrigin = lockedRayOrigin.add(delta);
+    }
+
     public static HitResult getStoredHit() {
         return storedHit;
     }

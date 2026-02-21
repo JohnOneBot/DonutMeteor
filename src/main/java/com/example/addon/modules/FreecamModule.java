@@ -93,6 +93,7 @@ public class FreecamModule extends Module {
         mc.player.setYaw(FreecamMiningState.getLockedYaw());
         mc.player.setPitch(FreecamMiningState.getLockedPitch());
 
+        FreecamMiningState.syncPlayerPosition(new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ()));
         FreecamMiningState.refreshLockedRaycast(mc);
         mc.crosshairTarget = FreecamMiningState.getStoredHit();
     }
