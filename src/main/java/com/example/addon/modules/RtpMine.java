@@ -1,6 +1,7 @@
 package com.example.addon.modules;
 
 import com.example.addon.AddonTemplate;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
@@ -16,6 +17,7 @@ import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.item.ItemStack;
+import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket;
 import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
@@ -100,7 +102,14 @@ public class RtpMine extends Module {
         .name("liquid-check-depth")
         .description("How many blocks below to scan for water/lava in the 3x3 drill path.")
         .defaultValue(10)
-        .range(3, 32)
+        .range(3, 100)
+        .build()
+    );
+
+
+    private final Setting<Boolean> disconnectOnTotemPop = sgGeneral.add(new BoolSetting.Builder()
+        .name("disconnect-on-totem-pop")
+        .defaultValue(true)
         .build()
     );
 
@@ -165,7 +174,6 @@ public class RtpMine extends Module {
         if (awaitingRtpArrival) return;
 
         moveToBlockCenter();
-        smoothLookDown();
 
         int triggerY = Math.max(targetTopY.get(), targetBottomY.get());
         if (mc.player.getBlockY() <= triggerY) {
@@ -186,6 +194,8 @@ public class RtpMine extends Module {
         if (hazard) {
             updateSideMineTarget(below);
             if (sideMineTarget != null) {
+                // Prevent diagonal drift while side-mining around hazards.
+                mc.player.setVelocity(0.0, mc.player.getVelocity().y, 0.0);
                 smoothLookAtBlock(sideMineTarget);
                 mc.interactionManager.updateBlockBreakingProgress(sideMineTarget, Direction.UP);
                 mc.player.swingHand(Hand.MAIN_HAND);
@@ -194,6 +204,7 @@ public class RtpMine extends Module {
         }
 
         sideMineTarget = null;
+        smoothLookDown();
 
         if (!belowState.isAir()) {
             mc.interactionManager.updateBlockBreakingProgress(below, Direction.UP);
@@ -215,6 +226,18 @@ public class RtpMine extends Module {
             retryRtpTicks--;
             if (retryRtpTicks == 0 && retryScheduled) {
                 issueRtp(false);
+            }
+        }
+    }
+
+
+    @EventHandler
+    private void onPacketReceive(PacketEvent.Receive event) {
+        if (!disconnectOnTotemPop.get() || mc.player == null || mc.world == null) return;
+
+        if (event.packet instanceof EntityStatusS2CPacket packet) {
+            if (packet.getStatus() == 35 && packet.getEntity(mc.world) == mc.player) {
+                disconnect("totem poped");
             }
         }
     }
@@ -273,6 +296,9 @@ public class RtpMine extends Module {
     }
 
     private void moveToBlockCenter() {
+        // Avoid anti-cheat rubberband from horizontal velocity edits while falling/airborne.
+        if (!mc.player.isOnGround()) return;
+
         BlockPos bp = mc.player.getBlockPos();
         Vec3d center = new Vec3d(bp.getX() + 0.5, mc.player.getY(), bp.getZ() + 0.5);
         Vec3d delta = center.subtract(new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ()));
