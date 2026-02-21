@@ -3,6 +3,7 @@ package com.example.addon.modules;
 import com.example.addon.AddonTemplate;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.EnumSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
@@ -20,6 +21,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
 
 import java.lang.reflect.Field;
 import java.util.Collection;
@@ -77,7 +79,33 @@ public class RtpMine extends Module {
         .build()
     );
 
+    private final Setting<Double> centerMoveSpeed = sgGeneral.add(new DoubleSetting.Builder()
+        .name("center-move-speed")
+        .description("How fast player moves to block center to avoid edge/corner stuck.")
+        .defaultValue(0.12)
+        .range(0.02, 0.4)
+        .build()
+    );
+
+    private final Setting<Double> lookSmooth = sgGeneral.add(new DoubleSetting.Builder()
+        .name("look-smooth")
+        .description("Pitch smoothing while looking down.")
+        .defaultValue(0.2)
+        .range(0.05, 1.0)
+        .build()
+    );
+
+    private final Setting<Integer> maxSafeDrop = sgGeneral.add(new IntSetting.Builder()
+        .name("max-safe-drop")
+        .description("If air-drop below is bigger than this, RTP instead of continuing to mine down.")
+        .defaultValue(6)
+        .range(2, 30)
+        .build()
+    );
+
     private int rtpCooldown;
+    private int retryRtpTicks;
+    private BlockPos rtpStartPos;
 
     public RtpMine() {
         super(AddonTemplate.CATEGORY, "rtp-mine", "RTPs, mines down smoothly with a pickaxe, and disconnects on stash/spawner detection.");
@@ -86,12 +114,20 @@ public class RtpMine extends Module {
     @Override
     public void onActivate() {
         rtpCooldown = 0;
+        retryRtpTicks = 0;
         issueRtp();
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null || mc.interactionManager == null) return;
+
+        if (retryRtpTicks > 0) {
+            retryRtpTicks--;
+            if (retryRtpTicks == 0 && !hasRtpMovedPlayer()) {
+                issueRtp();
+            }
+        }
 
         if (!isHoldingPickaxe()) {
             error("Hold a pickaxe in main hand.");
@@ -121,10 +157,23 @@ public class RtpMine extends Module {
             return;
         }
 
+        moveToBlockCenter();
+        smoothLookDown();
+
         BlockPos below = mc.player.getBlockPos().down();
         BlockState belowState = mc.world.getBlockState(below);
 
-        if (avoidLiquids.get() && (belowState.isOf(Blocks.WATER) || belowState.isOf(Blocks.LAVA))) {
+        if (avoidLiquids.get() && isLiquidBlock(belowState)) {
+            if (!tryMineSafeSide(below)) {
+                if (rtpCooldown <= 0) {
+                    issueRtp();
+                    rtpCooldown = 40;
+                } else rtpCooldown--;
+            }
+            return;
+        }
+
+        if (isUnsafeDrop(below)) {
             if (rtpCooldown <= 0) {
                 issueRtp();
                 rtpCooldown = 40;
@@ -133,7 +182,6 @@ public class RtpMine extends Module {
         }
 
         if (!belowState.isAir()) {
-            mc.player.setPitch(90f);
             mc.interactionManager.updateBlockBreakingProgress(below, Direction.UP);
             mc.player.swingHand(Hand.MAIN_HAND);
         }
@@ -145,6 +193,66 @@ public class RtpMine extends Module {
         String cmd = reg.isEmpty() ? "/rtp" : "/rtp " + reg;
         mc.player.networkHandler.sendChatMessage(cmd);
         info("RTP -> " + (reg.isEmpty() ? "default" : reg));
+        rtpStartPos = mc.player.getBlockPos();
+        retryRtpTicks = 20; // retry once after 1 second if unchanged
+    }
+
+    private boolean hasRtpMovedPlayer() {
+        if (mc.player == null || rtpStartPos == null) return true;
+        return mc.player.getBlockPos().getManhattanDistance(rtpStartPos) >= 8;
+    }
+
+    private void moveToBlockCenter() {
+        BlockPos bp = mc.player.getBlockPos();
+        Vec3d center = new Vec3d(bp.getX() + 0.5, mc.player.getY(), bp.getZ() + 0.5);
+        Vec3d delta = center.subtract(new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ()));
+        Vec3d horizontal = new Vec3d(delta.x, 0, delta.z);
+
+        if (horizontal.lengthSquared() < 0.0004) return;
+
+        Vec3d vel = mc.player.getVelocity();
+        mc.player.setVelocity(
+            vel.x + horizontal.x * centerMoveSpeed.get(),
+            vel.y,
+            vel.z + horizontal.z * centerMoveSpeed.get()
+        );
+    }
+
+    private void smoothLookDown() {
+        float current = mc.player.getPitch();
+        float target = 90f;
+        float next = (float) (current + (target - current) * lookSmooth.get());
+        mc.player.setPitch(next);
+    }
+
+    private boolean tryMineSafeSide(BlockPos below) {
+        for (Direction dir : new Direction[] {Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST}) {
+            BlockPos side = below.offset(dir);
+            BlockState sideState = mc.world.getBlockState(side);
+            if (sideState.isAir()) continue;
+            if (isLiquidBlock(sideState)) continue;
+            mc.interactionManager.updateBlockBreakingProgress(side, dir.getOpposite());
+            mc.player.swingHand(Hand.MAIN_HAND);
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isUnsafeDrop(BlockPos below) {
+        int air = 0;
+        BlockPos cursor = below;
+        while (air <= maxSafeDrop.get()) {
+            BlockState s = mc.world.getBlockState(cursor);
+            if (!s.isAir()) return false;
+            if (isLiquidBlock(s)) return true;
+            air++;
+            cursor = cursor.down();
+        }
+        return true;
+    }
+
+    private boolean isLiquidBlock(BlockState state) {
+        return state.isOf(Blocks.WATER) || state.isOf(Blocks.LAVA) || !state.getFluidState().isEmpty();
     }
 
     private boolean isHoldingPickaxe() {
