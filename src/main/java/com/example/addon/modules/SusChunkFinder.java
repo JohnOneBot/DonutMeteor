@@ -70,6 +70,13 @@ public class SusChunkFinder extends Module {
         .build()
     );
 
+    private final Setting<Boolean> detectCaveVines = sgGeneral.add(new BoolSetting.Builder()
+        .name("detect-cave-vines")
+        .description("Flags chunks with suspiciously dense fully-grown cave vines with glow berries.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Integer> minBudding = sgGeneral.add(new IntSetting.Builder()
         .name("min-budding-amethyst")
         .description("Minimum budding amethyst blocks in chunk to flag geode growth.")
@@ -130,6 +137,36 @@ public class SusChunkFinder extends Module {
         .build()
     );
 
+    private final Setting<Integer> minCaveVineColumns = sgGeneral.add(new IntSetting.Builder()
+        .name("min-cave-vine-columns")
+        .description("Minimum fully-grown cave vine columns to flag a chunk.")
+        .defaultValue(8)
+        .range(1, 256)
+        .sliderRange(1, 64)
+        .visible(detectCaveVines::get)
+        .build()
+    );
+
+    private final Setting<Integer> minCaveVineHeight = sgGeneral.add(new IntSetting.Builder()
+        .name("min-cave-vine-height")
+        .description("Minimum cave vine column height to count as fully-grown.")
+        .defaultValue(4)
+        .range(1, 64)
+        .sliderRange(1, 16)
+        .visible(detectCaveVines::get)
+        .build()
+    );
+
+    private final Setting<Integer> minGlowBerries = sgGeneral.add(new IntSetting.Builder()
+        .name("min-glow-berries")
+        .description("Minimum cave vine blocks with berries in a chunk to flag.")
+        .defaultValue(12)
+        .range(1, 512)
+        .sliderRange(1, 64)
+        .visible(detectCaveVines::get)
+        .build()
+    );
+
     private final Setting<RenderMode> renderMode = sgGeneral.add(new EnumSetting.Builder<RenderMode>()
         .name("render-mode")
         .description("How suspicious chunks are rendered.")
@@ -162,7 +199,7 @@ public class SusChunkFinder extends Module {
     private final Map<ChunkPos, String> reasons = new HashMap<>();
 
     public SusChunkFinder() {
-        super(AddonTemplate.CATEGORY, "sus-chunks", "Flags suspicious chunks using geode growth, rotated deepslate, and kelp patterns.");
+        super(AddonTemplate.CATEGORY, "sus-chunks", "Flags suspicious chunks using geode growth, rotated deepslate, kelp, and cave vine/glow berry patterns.");
     }
 
     @Override
@@ -203,6 +240,8 @@ public class SusChunkFinder extends Module {
 
         int kelpColumns = 0;
         int kelpTopsAt62 = 0;
+        int caveVineColumns = 0;
+        int glowBerries = 0;
 
         int yMin = chunk.getBottomY();
         int yMax = yMin + chunk.getHeight();
@@ -211,6 +250,9 @@ public class SusChunkFinder extends Module {
             for (int z = cpos.getStartZ(); z < cpos.getStartZ() + 16; z++) {
                 int kelpBottom = -1;
                 int kelpTop = -1;
+                int vineBottom = -1;
+                int vineTop = -1;
+                int vineBerryBlocks = 0;
 
                 for (int y = yMin; y < yMax; y++) {
                     BlockPos pos = new BlockPos(x, y, z);
@@ -230,11 +272,27 @@ public class SusChunkFinder extends Module {
                         if (kelpBottom < 0) kelpBottom = y;
                         kelpTop = y;
                     }
+
+                    if (state.isOf(Blocks.CAVE_VINES) || state.isOf(Blocks.CAVE_VINES_PLANT)) {
+                        if (vineBottom < 0) vineBottom = y;
+                        vineTop = y;
+
+                        if (state.contains(Properties.BERRIES) && state.get(Properties.BERRIES)) {
+                            vineBerryBlocks++;
+                            glowBerries++;
+                        }
+                    }
                 }
 
                 if (kelpBottom >= 0 && (kelpTop - kelpBottom + 1) >= minKelpHeight.get()) {
                     kelpColumns++;
                     if (kelpTop == 62) kelpTopsAt62++;
+                }
+
+                if (vineBottom >= 0
+                    && (vineTop - vineBottom + 1) >= minCaveVineHeight.get()
+                    && vineBerryBlocks > 0) {
+                    caveVineColumns++;
                 }
             }
         }
@@ -244,13 +302,17 @@ public class SusChunkFinder extends Module {
         boolean kelpSus = detectKelp.get()
             && kelpColumns >= minKelpColumns.get()
             && (kelpColumns == 0 ? false : ((double) kelpTopsAt62 / kelpColumns) >= minKelpTopRatio.get());
+        boolean caveVineSus = detectCaveVines.get()
+            && caveVineColumns >= minCaveVineColumns.get()
+            && glowBerries >= minGlowBerries.get();
 
-        boolean suspicious = geodeSus || rotatedSus || kelpSus;
+        boolean suspicious = geodeSus || rotatedSus || kelpSus || caveVineSus;
 
         String reason = "";
         if (geodeSus) reason += "geode ";
         if (rotatedSus) reason += "rotated_deepslate ";
         if (kelpSus) reason += "kelp ";
+        if (caveVineSus) reason += "cave_vines ";
 
         boolean added;
         if (suspicious) {
@@ -263,7 +325,7 @@ public class SusChunkFinder extends Module {
         }
 
         if (added && chatFeedback.get()) {
-            info("Flagged " + cpos + " [" + reasons.get(cpos) + "] (budding=" + budding + ", growth=" + growth + ", rotated=" + rotated + ", kelp=" + kelpTopsAt62 + "/" + kelpColumns + ")");
+            info("Flagged " + cpos + " [" + reasons.get(cpos) + "] (budding=" + budding + ", growth=" + growth + ", rotated=" + rotated + ", kelp=" + kelpTopsAt62 + "/" + kelpColumns + ", cave_vines=" + caveVineColumns + ", glow_berries=" + glowBerries + ")");
         }
     }
 
