@@ -229,7 +229,7 @@ public class RtpMine extends Module {
             return;
         }
 
-        String command = raw.replaceFirst("^/+", "").trim();
+        String command = raw.replaceFirst("^/+", "").trim().replaceAll("\\s+", " ");
         if (command.isEmpty()) {
             error("rtp-command is invalid.");
             toggle();
@@ -238,9 +238,9 @@ public class RtpMine extends Module {
 
         boolean sent = sendAsCommand(command);
         if (!sent) {
-            error("Could not send RTP as command API; stopping to avoid public chat leak.");
-            toggle();
-            return;
+            // Fallback for mappings/versions without exposed command API.
+            // Sending a clean slash-command chat string still executes server commands.
+            mc.player.networkHandler.sendChatMessage("/" + command);
         }
 
         info("RTP -> /" + command);
