@@ -4,16 +4,18 @@ import com.example.addon.AddonTemplate;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
-import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.Blocks;
 import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.WorldChunk;
 
 import java.lang.reflect.Field;
 import java.util.Collection;
@@ -43,15 +45,6 @@ public class LeaveOnFeature extends Module {
         .build()
     );
 
-    private final Setting<Integer> spawnerRange = sgGeneral.add(new IntSetting.Builder()
-        .name("spawner-range")
-        .description("Detection radius for nearby spawners.")
-        .defaultValue(12)
-        .range(1, 64)
-        .visible(leaveOnSpawnerFind::get)
-        .build()
-    );
-
     public LeaveOnFeature() {
         super(AddonTemplate.CATEGORY, "leave-on", "Auto disconnect safety for totem pop, stash find, or spawner find.");
     }
@@ -60,7 +53,7 @@ public class LeaveOnFeature extends Module {
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null) return;
 
-        if (leaveOnSpawnerFind.get() && hasSpawnerNearby(spawnerRange.get())) {
+        if (leaveOnSpawnerFind.get() && hasSpawnerInLoadedChunks()) {
             disconnect("spawner found");
             return;
         }
@@ -81,15 +74,24 @@ public class LeaveOnFeature extends Module {
         }
     }
 
-    private boolean hasSpawnerNearby(int radius) {
-        BlockPos base = mc.player.getBlockPos();
-        for (int x = -radius; x <= radius; x++) {
-            for (int y = -radius; y <= radius; y++) {
-                for (int z = -radius; z <= radius; z++) {
-                    if (mc.world.getBlockState(base.add(x, y, z)).isOf(Blocks.SPAWNER)) return true;
+    private boolean hasSpawnerInLoadedChunks() {
+        for (Chunk chunk : Utils.chunks()) {
+            if (!(chunk instanceof WorldChunk worldChunk)) continue;
+
+            int yMin = worldChunk.getBottomY();
+            int yMax = yMin + worldChunk.getHeight();
+            int xStart = worldChunk.getPos().getStartX();
+            int zStart = worldChunk.getPos().getStartZ();
+
+            for (int x = xStart; x < xStart + 16; x++) {
+                for (int z = zStart; z < zStart + 16; z++) {
+                    for (int y = yMin; y < yMax; y++) {
+                        if (worldChunk.getBlockState(new BlockPos(x, y, z)).isOf(Blocks.SPAWNER)) return true;
+                    }
                 }
             }
         }
+
         return false;
     }
 
