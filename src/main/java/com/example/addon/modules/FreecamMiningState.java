@@ -53,10 +53,10 @@ public final class FreecamMiningState {
 
         if (progressionDirection == null) progressionDirection = resolveProgressionDirection(storedHit, lockedYaw, lockedPitch);
 
-        Vec3d direction = Vec3d.of(progressionDirection.getVector());
+        Vec3d look = Vec3d.fromPolar(lockedPitch, lockedYaw);
         double eyeY = lockedPos.y + mc.player.getEyeHeight(mc.player.getPose());
         Vec3d start = new Vec3d(lockedPos.x, eyeY, lockedPos.z);
-        Vec3d end = start.add(direction.multiply(VANILLA_REACH));
+        Vec3d end = start.add(look.multiply(VANILLA_REACH));
 
         Entity entity = mc.player;
         HitResult hit = mc.world.raycast(new RaycastContext(start, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, entity));
@@ -67,17 +67,14 @@ public final class FreecamMiningState {
 
         storedHit = hit;
         updateStoredBlockPos(hit);
+
+        if (hit instanceof BlockHitResult blockHit) progressionDirection = blockHit.getSide().getOpposite();
     }
 
     private static Direction resolveProgressionDirection(HitResult hit, float yaw, float pitch) {
         if (hit instanceof BlockHitResult blockHit) return blockHit.getSide().getOpposite();
 
         Vec3d look = Vec3d.fromPolar(pitch, yaw);
-
-        // Prevent accidental vertical drift for almost-level mining lines.
-        if (Math.abs(pitch) <= 20f) {
-            return Direction.getFacing(look.x, 0.0, look.z);
-        }
 
         return Direction.getFacing(look.x, look.y, look.z);
     }
