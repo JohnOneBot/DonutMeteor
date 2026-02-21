@@ -15,7 +15,7 @@ import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.item.ItemStack;
-import net.minecraft.item.PickaxeItem;
+import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
@@ -149,7 +149,7 @@ public class RtpMine extends Module {
 
     private boolean isHoldingPickaxe() {
         ItemStack stack = mc.player.getMainHandStack();
-        return stack.getItem() instanceof PickaxeItem;
+        return stack.isIn(ItemTags.PICKAXES);
     }
 
     private boolean hasSpawnerNearby(int radius) {
