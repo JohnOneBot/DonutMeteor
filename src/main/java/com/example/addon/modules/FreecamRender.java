@@ -5,6 +5,7 @@ import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
+import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -45,6 +46,15 @@ public class FreecamRender extends Module {
     private final Setting<SettingColor> lineColor = sgGeneral.add(new ColorSetting.Builder()
         .name("line-color")
         .defaultValue(new SettingColor(30, 170, 255, 170))
+        .build()
+    );
+
+    private final Setting<Double> cubeSize = sgGeneral.add(new DoubleSetting.Builder()
+        .name("cube-size")
+        .description("Size of each rendered cube in the 3x3 drill plane.")
+        .defaultValue(1.0)
+        .range(0.1, 1.0)
+        .sliderRange(0.1, 1.0)
         .build()
     );
 
@@ -97,7 +107,14 @@ public class FreecamRender extends Module {
                 if (planeState.isAir()) continue;
                 if (!planeState.getFluidState().isEmpty()) continue;
 
-                event.renderer.box(pos, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
+                double size = cubeSize.get();
+                double inset = (1.0 - size) / 2.0;
+
+                event.renderer.box(
+                    pos.getX() + inset, pos.getY() + inset, pos.getZ() + inset,
+                    pos.getX() + 1 - inset, pos.getY() + 1 - inset, pos.getZ() + 1 - inset,
+                    sideColor.get(), lineColor.get(), ShapeMode.Both, 0
+                );
             }
         }
     }

@@ -59,7 +59,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Boolean> detectRotatedDeepslate = sgGeneral.add(new BoolSetting.Builder()
         .name("detect-rotated-deepslate")
         .description("Flags chunks with lots of rotated deepslate.")
-        .defaultValue(true)
+        .defaultValue(false)
         .build()
     );
 
@@ -80,7 +80,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> minBudding = sgGeneral.add(new IntSetting.Builder()
         .name("min-budding-amethyst")
         .description("Minimum budding amethyst blocks in chunk to flag geode growth.")
-        .defaultValue(8)
+        .defaultValue(18)
         .range(1, 512)
         .sliderRange(1, 64)
         .visible(detectGeode::get)
@@ -90,17 +90,35 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> minClusters = sgGeneral.add(new IntSetting.Builder()
         .name("min-amethyst-growth")
         .description("Minimum amethyst growth blocks (small/medium/large/cluster) in chunk to flag geode growth.")
-        .defaultValue(10)
+        .defaultValue(24)
         .range(1, 1024)
         .sliderRange(1, 128)
         .visible(detectGeode::get)
         .build()
     );
 
+    private final Setting<Boolean> requireFullClusters = sgGeneral.add(new BoolSetting.Builder()
+        .name("require-full-amethyst-clusters")
+        .description("Require fully grown amethyst clusters for geode suspicion.")
+        .defaultValue(true)
+        .visible(detectGeode::get)
+        .build()
+    );
+
+    private final Setting<Integer> minFullClusters = sgGeneral.add(new IntSetting.Builder()
+        .name("min-full-amethyst-clusters")
+        .description("Minimum fully grown amethyst clusters in chunk to flag geode growth.")
+        .defaultValue(10)
+        .range(1, 512)
+        .sliderRange(1, 64)
+        .visible(() -> detectGeode.get() && requireFullClusters.get())
+        .build()
+    );
+
     private final Setting<Integer> minRotatedDeepslate = sgGeneral.add(new IntSetting.Builder()
         .name("min-rotated-deepslate")
         .description("Minimum rotated deepslate blocks (axis not Y) in chunk to flag.")
-        .defaultValue(6)
+        .defaultValue(14)
         .range(1, 4096)
         .sliderRange(1, 256)
         .visible(detectRotatedDeepslate::get)
@@ -110,7 +128,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> minKelpColumns = sgGeneral.add(new IntSetting.Builder()
         .name("min-kelp-columns")
         .description("Minimum tall kelp columns in chunk to flag kelp pattern.")
-        .defaultValue(10)
+        .defaultValue(20)
         .range(1, 256)
         .sliderRange(1, 64)
         .visible(detectKelp::get)
@@ -120,7 +138,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> minKelpHeight = sgGeneral.add(new IntSetting.Builder()
         .name("min-kelp-height")
         .description("Minimum kelp height for a column to count.")
-        .defaultValue(8)
+        .defaultValue(12)
         .range(1, 64)
         .sliderRange(1, 32)
         .visible(detectKelp::get)
@@ -130,7 +148,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Double> minKelpTopRatio = sgGeneral.add(new DoubleSetting.Builder()
         .name("min-kelp-top62-ratio")
         .description("Required ratio of counted kelp columns with top at Y=62.")
-        .defaultValue(0.6)
+        .defaultValue(0.85)
         .range(0.0, 1.0)
         .sliderRange(0.0, 1.0)
         .visible(detectKelp::get)
@@ -140,7 +158,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> minCaveVineColumns = sgGeneral.add(new IntSetting.Builder()
         .name("min-cave-vine-columns")
         .description("Minimum fully-grown cave vine columns to flag a chunk.")
-        .defaultValue(8)
+        .defaultValue(16)
         .range(1, 256)
         .sliderRange(1, 64)
         .visible(detectCaveVines::get)
@@ -150,7 +168,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> minCaveVineHeight = sgGeneral.add(new IntSetting.Builder()
         .name("min-cave-vine-height")
         .description("Minimum cave vine column height to count as fully-grown.")
-        .defaultValue(4)
+        .defaultValue(6)
         .range(1, 64)
         .sliderRange(1, 16)
         .visible(detectCaveVines::get)
@@ -160,7 +178,7 @@ public class SusChunkFinder extends Module {
     private final Setting<Integer> minGlowBerries = sgGeneral.add(new IntSetting.Builder()
         .name("min-glow-berries")
         .description("Minimum cave vine blocks with berries in a chunk to flag.")
-        .defaultValue(12)
+        .defaultValue(28)
         .range(1, 512)
         .sliderRange(1, 64)
         .visible(detectCaveVines::get)
@@ -171,6 +189,16 @@ public class SusChunkFinder extends Module {
         .name("render-mode")
         .description("How suspicious chunks are rendered.")
         .defaultValue(RenderMode.TopPlane)
+        .build()
+    );
+
+    private final Setting<Integer> topPlaneY = sgGeneral.add(new IntSetting.Builder()
+        .name("top-plane-y")
+        .description("Y level used for TopPlane rendering.")
+        .defaultValue(63)
+        .range(-64, 320)
+        .sliderRange(-64, 320)
+        .visible(() -> renderMode.get() == RenderMode.TopPlane)
         .build()
     );
 
@@ -236,6 +264,7 @@ public class SusChunkFinder extends Module {
 
         int budding = 0;
         int growth = 0;
+        int fullClusters = 0;
         int rotated = 0;
 
         int kelpColumns = 0;
@@ -260,6 +289,7 @@ public class SusChunkFinder extends Module {
 
                     if (state.isOf(Blocks.BUDDING_AMETHYST)) budding++;
                     if (state.getBlock() instanceof AmethystClusterBlock) growth++;
+                    if (state.isOf(Blocks.AMETHYST_CLUSTER)) fullClusters++;
 
                     if (state.isOf(Blocks.DEEPSLATE)
                         && state.contains(Properties.AXIS)
@@ -297,7 +327,10 @@ public class SusChunkFinder extends Module {
             }
         }
 
-        boolean geodeSus = detectGeode.get() && budding >= minBudding.get() && growth >= minClusters.get();
+        boolean geodeSus = detectGeode.get()
+            && budding >= minBudding.get()
+            && growth >= minClusters.get()
+            && (!requireFullClusters.get() || fullClusters >= minFullClusters.get());
         boolean rotatedSus = detectRotatedDeepslate.get() && rotated >= minRotatedDeepslate.get();
         boolean kelpSus = detectKelp.get()
             && kelpColumns >= minKelpColumns.get()
@@ -325,7 +358,7 @@ public class SusChunkFinder extends Module {
         }
 
         if (added && chatFeedback.get()) {
-            info("Flagged " + cpos + " [" + reasons.get(cpos) + "] (budding=" + budding + ", growth=" + growth + ", rotated=" + rotated + ", kelp=" + kelpTopsAt62 + "/" + kelpColumns + ", cave_vines=" + caveVineColumns + ", glow_berries=" + glowBerries + ")");
+            info("Flagged " + cpos + " [" + reasons.get(cpos) + "] (budding=" + budding + ", growth=" + growth + ", full_clusters=" + fullClusters + ", rotated=" + rotated + ", kelp=" + kelpTopsAt62 + "/" + kelpColumns + ", cave_vines=" + caveVineColumns + ", glow_berries=" + glowBerries + ")");
         }
     }
 
@@ -335,7 +368,7 @@ public class SusChunkFinder extends Module {
 
         for (ChunkPos pos : flaggedChunks) {
             if (renderMode.get() == RenderMode.TopPlane) {
-                double y = 63;
+                double y = topPlaneY.get();
                 event.renderer.box(
                     pos.getStartX(), y, pos.getStartZ(),
                     pos.getStartX() + 16, y + 0.05, pos.getStartZ() + 16,
