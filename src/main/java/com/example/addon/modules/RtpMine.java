@@ -24,6 +24,7 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.Collection;
 import java.util.Map;
 
@@ -105,6 +106,7 @@ public class RtpMine extends Module {
 
     private int rtpCooldown;
     private int retryRtpTicks;
+    private boolean retryScheduled;
     private BlockPos rtpStartPos;
 
     public RtpMine() {
@@ -115,7 +117,16 @@ public class RtpMine extends Module {
     public void onActivate() {
         rtpCooldown = 0;
         retryRtpTicks = 0;
-        issueRtp();
+        retryScheduled = false;
+        if (mc.options != null) mc.options.attackKey.setPressed(true);
+        issueRtp(true);
+    }
+
+    @Override
+    public void onDeactivate() {
+        if (mc.options != null) mc.options.attackKey.setPressed(false);
+        retryScheduled = false;
+        retryRtpTicks = 0;
     }
 
     @EventHandler
@@ -124,8 +135,8 @@ public class RtpMine extends Module {
 
         if (retryRtpTicks > 0) {
             retryRtpTicks--;
-            if (retryRtpTicks == 0 && !hasRtpMovedPlayer()) {
-                issueRtp();
+            if (retryRtpTicks == 0 && retryScheduled && !hasRtpMovedPlayer()) {
+                issueRtp(false);
             }
         }
 
@@ -151,7 +162,7 @@ public class RtpMine extends Module {
 
         if (y <= max && y >= min) {
             if (rtpCooldown <= 0) {
-                issueRtp();
+                issueRtp(true);
                 rtpCooldown = 40;
             } else rtpCooldown--;
             return;
@@ -163,10 +174,10 @@ public class RtpMine extends Module {
         BlockPos below = mc.player.getBlockPos().down();
         BlockState belowState = mc.world.getBlockState(below);
 
-        if (avoidLiquids.get() && isLiquidBlock(belowState)) {
+        if (avoidLiquids.get() && (isLiquidBlock(belowState) || hasLiquidInDrillPath(below))) {
             if (!tryMineSafeSide(below)) {
                 if (rtpCooldown <= 0) {
-                    issueRtp();
+                    issueRtp(true);
                     rtpCooldown = 40;
                 } else rtpCooldown--;
             }
@@ -175,7 +186,7 @@ public class RtpMine extends Module {
 
         if (isUnsafeDrop(below)) {
             if (rtpCooldown <= 0) {
-                issueRtp();
+                issueRtp(true);
                 rtpCooldown = 40;
             } else rtpCooldown--;
             return;
@@ -187,19 +198,44 @@ public class RtpMine extends Module {
         }
     }
 
-    private void issueRtp() {
+    private void issueRtp(boolean allowRetry) {
         if (mc.player == null || mc.player.networkHandler == null) return;
+
         String reg = region.get().trim();
-        String cmd = reg.isEmpty() ? "/rtp" : "/rtp " + reg;
-        mc.player.networkHandler.sendChatMessage(cmd);
+        String command = reg.isEmpty() ? "rtp" : "rtp " + reg;
+
+        boolean sent = sendAsCommand(command);
+        if (!sent) {
+            String cmdWithSlash = "/" + command;
+            mc.player.networkHandler.sendChatMessage(cmdWithSlash);
+        }
+
         info("RTP -> " + (reg.isEmpty() ? "default" : reg));
         rtpStartPos = mc.player.getBlockPos();
-        retryRtpTicks = 20; // retry once after 1 second if unchanged
+
+        retryScheduled = allowRetry;
+        retryRtpTicks = allowRetry ? 20 : 0;
+    }
+
+    private boolean sendAsCommand(String commandNoSlash) {
+        try {
+            Object handler = mc.player.networkHandler;
+            for (String m : new String[] {"sendChatCommand", "sendCommand"}) {
+                try {
+                    Method method = handler.getClass().getMethod(m, String.class);
+                    method.invoke(handler, commandNoSlash);
+                    return true;
+                } catch (NoSuchMethodException ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 
     private boolean hasRtpMovedPlayer() {
         if (mc.player == null || rtpStartPos == null) return true;
-        return mc.player.getBlockPos().getManhattanDistance(rtpStartPos) >= 8;
+        return mc.player.getBlockPos().getManhattanDistance(rtpStartPos) >= 2;
     }
 
     private void moveToBlockCenter() {
@@ -234,6 +270,17 @@ public class RtpMine extends Module {
             mc.interactionManager.updateBlockBreakingProgress(side, dir.getOpposite());
             mc.player.swingHand(Hand.MAIN_HAND);
             return true;
+        }
+        return false;
+    }
+
+    private boolean hasLiquidInDrillPath(BlockPos below) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                BlockPos p1 = below.add(dx, 0, dz);
+                BlockPos p2 = below.add(dx, -1, dz);
+                if (isLiquidBlock(mc.world.getBlockState(p1)) || isLiquidBlock(mc.world.getBlockState(p2))) return true;
+            }
         }
         return false;
     }
