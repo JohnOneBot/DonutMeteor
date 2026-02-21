@@ -57,24 +57,33 @@ public class FreecamRender extends Module {
         if (onlyWhenActive.get() && !FreecamMiningState.isActive()) return;
         if (mc.world == null) return;
 
-        BlockHitResult hit = getCameraTarget();
-        if (hit == null) return;
+        BlockPos center;
+        Direction face;
 
-        BlockPos center = hit.getBlockPos();
+        // While Freecam+ mining lock is active, anchor render to the locked mined block (not detached camera).
+        if (FreecamMiningState.isActive()) {
+            center = FreecamMiningState.getStoredBlockPos();
+            face = FreecamMiningState.getProgressionDirection();
+            if (center == null || face == null) return;
+        } else {
+            BlockHitResult hit = getCameraTarget();
+            if (hit == null) return;
+            center = hit.getBlockPos();
+            face = hit.getSide();
+
+            // When looking up/down, use camera yaw to pick a vertical plane instead of horizontal flat plane.
+            if (face.getAxis() == Direction.Axis.Y) {
+                Camera camera = mc.gameRenderer.getCamera();
+                if (camera != null) {
+                    Vec3d look = Vec3d.fromPolar(0f, camera.getYaw());
+                    face = Math.abs(look.x) > Math.abs(look.z) ? Direction.EAST : Direction.SOUTH;
+                }
+            }
+        }
+
         BlockState state = mc.world.getBlockState(center);
         if (state.isAir()) return;
         if (!state.getFluidState().isEmpty()) return;
-
-        Direction face = hit.getSide();
-
-        // When looking up/down, use camera yaw to pick a vertical plane instead of horizontal flat plane.
-        if (face.getAxis() == Direction.Axis.Y) {
-            Camera camera = mc.gameRenderer.getCamera();
-            if (camera != null) {
-                Vec3d look = Vec3d.fromPolar(0f, camera.getYaw());
-                face = Math.abs(look.x) > Math.abs(look.z) ? Direction.EAST : Direction.SOUTH;
-            }
-        }
 
         for (int a = -1; a <= 1; a++) {
             for (int b = -1; b <= 1; b++) {
