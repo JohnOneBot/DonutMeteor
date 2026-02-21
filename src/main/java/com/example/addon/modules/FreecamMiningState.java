@@ -11,7 +11,7 @@ import net.minecraft.world.RaycastContext;
 
 public final class FreecamMiningState {
     private static final double VANILLA_REACH = 4.5;
-    private static final int AIR_CONFIRM_TICKS = 4;
+    private static final int AIR_CONFIRM_TICKS = 6;
 
     private static boolean active;
     private static float lockedYaw;
@@ -70,8 +70,16 @@ public final class FreecamMiningState {
             lockedRayOrigin = new Vec3d(lockedPos.x, eyeY, lockedPos.z);
         }
 
-        // Only move forward after seeing the same target block as air for several ticks.
-        if (storedBlockPos != null && mc.world.getBlockState(storedBlockPos).isAir()) {
+        Vec3d end = lockedRayOrigin.add(direction.multiply(VANILLA_REACH));
+        Entity entity = mc.player;
+        HitResult directHit = mc.world.raycast(new RaycastContext(lockedRayOrigin, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, entity));
+
+        // Only move forward when:
+        // 1) current tracked block is consistently air (anti-rubber-band delay)
+        // 2) there is no block left in current vanilla-reach segment (avoid skipping into walls)
+        if (storedBlockPos != null
+            && mc.world.getBlockState(storedBlockPos).isAir()
+            && directHit.getType() == HitResult.Type.MISS) {
             if (storedBlockPos.equals(airCandidatePos)) airCandidateTicks++;
             else {
                 airCandidatePos = storedBlockPos;
@@ -82,15 +90,15 @@ public final class FreecamMiningState {
                 lockedRayOrigin = lockedRayOrigin.add(direction);
                 airCandidatePos = null;
                 airCandidateTicks = 0;
+                end = lockedRayOrigin.add(direction.multiply(VANILLA_REACH));
+                directHit = mc.world.raycast(new RaycastContext(lockedRayOrigin, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, entity));
             }
         } else {
             airCandidatePos = null;
             airCandidateTicks = 0;
         }
 
-        Vec3d end = lockedRayOrigin.add(direction.multiply(VANILLA_REACH));
-        Entity entity = mc.player;
-        HitResult hit = mc.world.raycast(new RaycastContext(lockedRayOrigin, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, entity));
+        HitResult hit = directHit;
 
         if (!(hit instanceof BlockHitResult)) {
             hit = BlockHitResult.createMissed(end, progressionDirection, BlockPos.ofFloored(end));
