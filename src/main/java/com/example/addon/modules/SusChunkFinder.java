@@ -167,7 +167,7 @@ public class SusChunkFinder extends Module {
         if (mc.world == null) return;
 
         int minY = mc.world.getBottomY();
-        int maxY = mc.world.getTopY();
+        int maxY = mc.world.getBottomY() + mc.world.getHeight();
 
         for (ChunkPos pos : flaggedChunks) {
             event.renderer.box(
