@@ -5,6 +5,7 @@ import com.example.addon.hud.HudExample;
 import com.example.addon.modules.FreecamModule;
 import com.example.addon.modules.FreecamRender;
 import com.example.addon.modules.ModuleExample;
+import com.example.addon.modules.SusChunkFinder;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -27,6 +28,7 @@ public class AddonTemplate extends MeteorAddon {
         // Modules
         Modules.get().add(new FreecamModule());
         Modules.get().add(new FreecamRender());
+        Modules.get().add(new SusChunkFinder());
         Modules.get().add(new ModuleExample());
 
         // Commands

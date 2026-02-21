@@ -49,7 +49,7 @@ public class FreecamRender extends Module {
     );
 
     public FreecamRender() {
-        super(AddonTemplate.CATEGORY, "Freecam+ Render", "Renders a 3x3 plane from your actual camera look target.");
+        super(AddonTemplate.CATEGORY, "Drill Render", "Renders a 3x3 plane from your actual camera look target.");
     }
 
     @EventHandler
