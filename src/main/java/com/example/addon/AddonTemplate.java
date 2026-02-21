@@ -3,6 +3,7 @@ package com.example.addon;
 import com.example.addon.commands.CommandExample;
 import com.example.addon.hud.HudExample;
 import com.example.addon.modules.FreecamModule;
+import com.example.addon.modules.FreecamRender;
 import com.example.addon.modules.ModuleExample;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
@@ -25,6 +26,7 @@ public class AddonTemplate extends MeteorAddon {
 
         // Modules
         Modules.get().add(new FreecamModule());
+        Modules.get().add(new FreecamRender());
         Modules.get().add(new ModuleExample());
 
         // Commands
