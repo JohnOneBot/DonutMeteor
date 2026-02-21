@@ -11,17 +11,13 @@ import net.minecraft.world.RaycastContext;
 
 public final class FreecamMiningState {
     private static final double VANILLA_REACH = 4.5;
-    private static final int AIR_CONFIRM_TICKS = 6;
 
     private static boolean active;
     private static float lockedYaw;
     private static float lockedPitch;
     private static Vec3d lockedPos;
-    private static Vec3d lockedRayOrigin;
     private static HitResult storedHit;
     private static BlockPos storedBlockPos;
-    private static BlockPos airCandidatePos;
-    private static int airCandidateTicks;
     private static Direction progressionDirection;
     private static Object autoMineTarget;
 
@@ -33,11 +29,8 @@ public final class FreecamMiningState {
         lockedYaw = yaw;
         lockedPitch = pitch;
         lockedPos = position;
-        lockedRayOrigin = null;
         storedHit = hit;
         autoMineTarget = targetSnapshot;
-        airCandidatePos = null;
-        airCandidateTicks = 0;
         updateStoredBlockPos(hit);
         progressionDirection = resolveProgressionDirection(hit, yaw, pitch);
     }
@@ -45,18 +38,15 @@ public final class FreecamMiningState {
     public static void deactivate() {
         active = false;
         lockedPos = null;
-        lockedRayOrigin = null;
         storedHit = null;
         storedBlockPos = null;
-        airCandidatePos = null;
-        airCandidateTicks = 0;
         progressionDirection = null;
         autoMineTarget = null;
     }
 
     /**
-     * Uses vanilla reach and advances a virtual ray origin when blocks are confirmed gone.
-     * Confirmation delay helps avoid marching forward on lag/rubber-band ghost breaks.
+     * Strict vanilla reach lock: raycast always starts from the player's synced position
+     * and never marches forward beyond normal reach distance.
      */
     public static void refreshLockedRaycast(MinecraftClient mc) {
         if (!active || mc == null || mc.world == null || mc.player == null || lockedPos == null) return;
@@ -64,41 +54,12 @@ public final class FreecamMiningState {
         if (progressionDirection == null) progressionDirection = resolveProgressionDirection(storedHit, lockedYaw, lockedPitch);
 
         Vec3d direction = Vec3d.of(progressionDirection.getVector());
+        double eyeY = lockedPos.y + mc.player.getEyeHeight(mc.player.getPose());
+        Vec3d start = new Vec3d(lockedPos.x, eyeY, lockedPos.z);
+        Vec3d end = start.add(direction.multiply(VANILLA_REACH));
 
-        if (lockedRayOrigin == null) {
-            double eyeY = lockedPos.y + mc.player.getEyeHeight(mc.player.getPose());
-            lockedRayOrigin = new Vec3d(lockedPos.x, eyeY, lockedPos.z);
-        }
-
-        Vec3d end = lockedRayOrigin.add(direction.multiply(VANILLA_REACH));
         Entity entity = mc.player;
-        HitResult directHit = mc.world.raycast(new RaycastContext(lockedRayOrigin, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, entity));
-
-        // Only move forward when:
-        // 1) current tracked block is consistently air (anti-rubber-band delay)
-        // 2) there is no block left in current vanilla-reach segment (avoid skipping into walls)
-        if (storedBlockPos != null
-            && mc.world.getBlockState(storedBlockPos).isAir()
-            && directHit.getType() == HitResult.Type.MISS) {
-            if (storedBlockPos.equals(airCandidatePos)) airCandidateTicks++;
-            else {
-                airCandidatePos = storedBlockPos;
-                airCandidateTicks = 1;
-            }
-
-            if (airCandidateTicks >= AIR_CONFIRM_TICKS) {
-                lockedRayOrigin = lockedRayOrigin.add(direction);
-                airCandidatePos = null;
-                airCandidateTicks = 0;
-                end = lockedRayOrigin.add(direction.multiply(VANILLA_REACH));
-                directHit = mc.world.raycast(new RaycastContext(lockedRayOrigin, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, entity));
-            }
-        } else {
-            airCandidatePos = null;
-            airCandidateTicks = 0;
-        }
-
-        HitResult hit = directHit;
+        HitResult hit = mc.world.raycast(new RaycastContext(start, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, entity));
 
         if (!(hit instanceof BlockHitResult)) {
             hit = BlockHitResult.createMissed(end, progressionDirection, BlockPos.ofFloored(end));
@@ -144,19 +105,7 @@ public final class FreecamMiningState {
 
     public static void syncPlayerPosition(Vec3d currentPlayerPos) {
         if (!active || currentPlayerPos == null) return;
-
-        if (lockedPos == null) {
-            lockedPos = currentPlayerPos;
-            return;
-        }
-
-        Vec3d delta = currentPlayerPos.subtract(lockedPos);
-        if (delta.lengthSquared() <= 1.0e-8) return;
-
         lockedPos = currentPlayerPos;
-
-        // Keep the virtual ray origin aligned with player movement to reduce server-side view desync.
-        if (lockedRayOrigin != null) lockedRayOrigin = lockedRayOrigin.add(delta);
     }
 
     public static HitResult getStoredHit() {
