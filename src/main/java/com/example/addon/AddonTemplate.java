@@ -4,8 +4,8 @@ import com.example.addon.commands.CommandExample;
 import com.example.addon.hud.HudExample;
 import com.example.addon.modules.FreecamModule;
 import com.example.addon.modules.FreecamRender;
-import com.example.addon.modules.ModuleExample;
 import com.example.addon.modules.SusChunkFinder;
+import com.example.addon.modules.RtpMine;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -18,18 +18,18 @@ import org.slf4j.Logger;
 
 public class AddonTemplate extends MeteorAddon {
     public static final Logger LOG = LogUtils.getLogger();
-    public static final Category CATEGORY = new Category("Example");
-    public static final HudGroup HUD_GROUP = new HudGroup("Example");
+    public static final Category CATEGORY = new Category("Donut +");
+    public static final HudGroup HUD_GROUP = new HudGroup("Donut +");
 
     @Override
     public void onInitialize() {
-        LOG.info("Initializing Meteor Addon Template");
+        LOG.info("Initializing Donut+ Meteor By Jaydenn");
 
         // Modules
         Modules.get().add(new FreecamModule());
         Modules.get().add(new FreecamRender());
         Modules.get().add(new SusChunkFinder());
-        Modules.get().add(new ModuleExample());
+        Modules.get().add(new RtpMine());
 
         // Commands
         Commands.add(new CommandExample());
