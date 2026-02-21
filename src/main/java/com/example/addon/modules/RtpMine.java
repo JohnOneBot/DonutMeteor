@@ -37,10 +37,10 @@ public class RtpMine extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
-    private final Setting<String> region = sgGeneral.add(new StringSetting.Builder()
-        .name("rtp-region")
-        .description("Region argument for /rtp, e.g. 'eu central'.")
-        .defaultValue("eu central")
+    private final Setting<String> rtpCommand = sgGeneral.add(new StringSetting.Builder()
+        .name("rtp-command")
+        .description("Full RTP command, e.g. /rtp eu central")
+        .defaultValue("/rtp eu central")
         .build()
     );
 
@@ -116,6 +116,7 @@ public class RtpMine extends Module {
     private boolean retryScheduled;
     private boolean awaitingRtpArrival;
     private BlockPos rtpStartPos;
+    private BlockPos sideMineTarget;
 
     public RtpMine() {
         super(AddonTemplate.CATEGORY, "rtp-mine", "RTPs, mines down smoothly with a pickaxe, and disconnects on stash/spawner detection.");
@@ -127,6 +128,7 @@ public class RtpMine extends Module {
         retryScheduled = false;
         awaitingRtpArrival = false;
         if (mc.options != null) mc.options.attackKey.setPressed(true);
+        sideMineTarget = null;
         issueRtp(true);
     }
 
@@ -136,6 +138,7 @@ public class RtpMine extends Module {
         retryRtpTicks = 0;
         retryScheduled = false;
         awaitingRtpArrival = false;
+        sideMineTarget = null;
     }
 
     @EventHandler
@@ -173,19 +176,24 @@ public class RtpMine extends Module {
         BlockPos below = mc.player.getBlockPos().down();
         BlockState belowState = mc.world.getBlockState(below);
 
+        boolean hazard = false;
         if (avoidLiquids.get()) {
             int liquidDepth = nearestLiquidDepthInDrillPath(below, liquidCheckDepth.get());
-            if (liquidDepth != -1) {
-                // Side-mine whenever liquid is detected within scan depth.
-                tryMineSafeSide(below);
-                return;
-            }
+            if (liquidDepth != -1) hazard = true;
         }
+        if (isUnsafeDrop(below)) hazard = true;
 
-        if (isUnsafeDrop(below)) {
-            tryMineSafeSide(below);
+        if (hazard) {
+            updateSideMineTarget(below);
+            if (sideMineTarget != null) {
+                smoothLookAtBlock(sideMineTarget);
+                mc.interactionManager.updateBlockBreakingProgress(sideMineTarget, Direction.UP);
+                mc.player.swingHand(Hand.MAIN_HAND);
+            }
             return;
         }
+
+        sideMineTarget = null;
 
         if (!belowState.isAir()) {
             mc.interactionManager.updateBlockBreakingProgress(below, Direction.UP);
@@ -214,13 +222,28 @@ public class RtpMine extends Module {
     private void issueRtp(boolean allowRetry) {
         if (mc.player == null || mc.player.networkHandler == null) return;
 
-        String reg = region.get().trim().replaceFirst("^/+", "");
-        String command = reg.isEmpty() ? "rtp" : "rtp " + reg;
+        String raw = rtpCommand.get().trim();
+        if (raw.isEmpty()) {
+            error("rtp-command is empty.");
+            toggle();
+            return;
+        }
+
+        String command = raw.replaceFirst("^/+", "").trim();
+        if (command.isEmpty()) {
+            error("rtp-command is invalid.");
+            toggle();
+            return;
+        }
 
         boolean sent = sendAsCommand(command);
-        if (!sent) mc.player.networkHandler.sendChatMessage("/" + command);
+        if (!sent) {
+            error("Could not send RTP as command API; stopping to avoid public chat leak.");
+            toggle();
+            return;
+        }
 
-        info("RTP -> " + (reg.isEmpty() ? "default" : reg));
+        info("RTP -> /" + command);
         rtpStartPos = mc.player.getBlockPos();
         awaitingRtpArrival = true;
 
@@ -272,18 +295,41 @@ public class RtpMine extends Module {
         mc.player.setPitch(next);
     }
 
-    private boolean tryMineSafeSide(BlockPos below) {
+    private void updateSideMineTarget(BlockPos below) {
+        if (sideMineTarget != null) {
+            BlockState current = mc.world.getBlockState(sideMineTarget);
+            if (!current.isAir() && !isLiquidBlock(current)) return;
+        }
+
+        sideMineTarget = null;
         for (Direction dir : new Direction[] {Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST}) {
             BlockPos side = below.offset(dir);
             BlockState sideState = mc.world.getBlockState(side);
             if (sideState.isAir()) continue;
             if (isLiquidBlock(sideState)) continue;
-
-            mc.interactionManager.updateBlockBreakingProgress(side, dir.getOpposite());
-            mc.player.swingHand(Hand.MAIN_HAND);
-            return true;
+            sideMineTarget = side;
+            return;
         }
-        return false;
+    }
+
+    private void smoothLookAtBlock(BlockPos pos) {
+        Vec3d eyes = new Vec3d(mc.player.getX(), mc.player.getEyeY(), mc.player.getZ());
+        Vec3d target = new Vec3d(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+        Vec3d d = target.subtract(eyes);
+
+        double flat = Math.sqrt(d.x * d.x + d.z * d.z);
+        float targetYaw = (float) (Math.toDegrees(Math.atan2(d.z, d.x)) - 90.0);
+        float targetPitch = (float) -Math.toDegrees(Math.atan2(d.y, flat));
+
+        mc.player.setYaw(lerpAngle(mc.player.getYaw(), targetYaw, lookSmooth.get().floatValue()));
+        mc.player.setPitch(mc.player.getPitch() + (targetPitch - mc.player.getPitch()) * lookSmooth.get().floatValue());
+    }
+
+    private float lerpAngle(float from, float to, float t) {
+        float delta = to - from;
+        while (delta < -180.0f) delta += 360.0f;
+        while (delta > 180.0f) delta -= 360.0f;
+        return from + delta * t;
     }
 
     private int nearestLiquidDepthInDrillPath(BlockPos below, int maxDepth) {
