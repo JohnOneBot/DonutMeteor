@@ -20,6 +20,8 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 
+import java.lang.reflect.Method;
+
 public class FreecamRender extends Module {
     private static final double VANILLA_REACH = 4.5;
 
@@ -91,13 +93,29 @@ public class FreecamRender extends Module {
         }
     }
 
+
+    private Vec3d getCameraPos(Camera camera) {
+        // Mapping-compatible camera position lookup across different Yarn names.
+        for (String name : new String[] {"getPos", "getPosition"}) {
+            try {
+                Method method = camera.getClass().getMethod(name);
+                Object out = method.invoke(camera);
+                if (out instanceof Vec3d vec) return vec;
+            } catch (Throwable ignored) {
+            }
+        }
+
+        BlockPos bp = camera.getBlockPos();
+        return new Vec3d(bp.getX() + 0.5, bp.getY() + 0.5, bp.getZ() + 0.5);
+    }
+
     private BlockHitResult getCameraTarget() {
         if (mc.world == null) return null;
 
         Camera camera = mc.gameRenderer.getCamera();
         if (camera == null) return null;
 
-        Vec3d start = camera.getPos();
+        Vec3d start = getCameraPos(camera);
         Vec3d look = Vec3d.fromPolar(camera.getPitch(), camera.getYaw());
         Vec3d end = start.add(look.multiply(VANILLA_REACH));
 
