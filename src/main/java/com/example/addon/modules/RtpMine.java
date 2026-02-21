@@ -39,7 +39,7 @@ public class RtpMine extends Module {
 
     private final Setting<String> region = sgGeneral.add(new StringSetting.Builder()
         .name("rtp-region")
-        .description("Region argument appended to /rtp command, e.g. 'eu central'.")
+        .description("Region argument for /rtp, e.g. 'eu central'.")
         .defaultValue("eu central")
         .build()
     );
@@ -51,15 +51,17 @@ public class RtpMine extends Module {
         .build()
     );
 
-    private final Setting<Integer> topY = sgGeneral.add(new IntSetting.Builder()
+    private final Setting<Integer> targetTopY = sgGeneral.add(new IntSetting.Builder()
         .name("target-top-y")
+        .description("RTP trigger height. When this Y is reached, RTP to a new location.")
         .defaultValue(-30)
         .range(-64, 320)
         .build()
     );
 
-    private final Setting<Integer> bottomY = sgGeneral.add(new IntSetting.Builder()
+    private final Setting<Integer> targetBottomY = sgGeneral.add(new IntSetting.Builder()
         .name("target-bottom-y")
+        .description("Kept for compatibility; highest of top/bottom is used as trigger Y.")
         .defaultValue(-40)
         .range(-64, 320)
         .build()
@@ -82,7 +84,6 @@ public class RtpMine extends Module {
 
     private final Setting<Double> centerMoveSpeed = sgGeneral.add(new DoubleSetting.Builder()
         .name("center-move-speed")
-        .description("How fast player moves to block center to avoid edge/corner stuck.")
         .defaultValue(0.12)
         .range(0.02, 0.4)
         .build()
@@ -90,23 +91,30 @@ public class RtpMine extends Module {
 
     private final Setting<Double> lookSmooth = sgGeneral.add(new DoubleSetting.Builder()
         .name("look-smooth")
-        .description("Pitch smoothing while looking down.")
         .defaultValue(0.2)
         .range(0.05, 1.0)
         .build()
     );
 
+    private final Setting<Integer> liquidCheckDepth = sgGeneral.add(new IntSetting.Builder()
+        .name("liquid-check-depth")
+        .description("How many blocks below to scan for water/lava in the 3x3 drill path.")
+        .defaultValue(10)
+        .range(3, 32)
+        .build()
+    );
+
     private final Setting<Integer> maxSafeDrop = sgGeneral.add(new IntSetting.Builder()
         .name("max-safe-drop")
-        .description("If air-drop below is bigger than this, RTP instead of continuing to mine down.")
+        .description("If open air drop below exceeds this, stop mining down and side-mine instead.")
         .defaultValue(6)
         .range(2, 30)
         .build()
     );
 
-    private int rtpCooldown;
     private int retryRtpTicks;
     private boolean retryScheduled;
+    private boolean awaitingRtpArrival;
     private BlockPos rtpStartPos;
 
     public RtpMine() {
@@ -115,9 +123,9 @@ public class RtpMine extends Module {
 
     @Override
     public void onActivate() {
-        rtpCooldown = 0;
         retryRtpTicks = 0;
         retryScheduled = false;
+        awaitingRtpArrival = false;
         if (mc.options != null) mc.options.attackKey.setPressed(true);
         issueRtp(true);
     }
@@ -125,20 +133,14 @@ public class RtpMine extends Module {
     @Override
     public void onDeactivate() {
         if (mc.options != null) mc.options.attackKey.setPressed(false);
-        retryScheduled = false;
         retryRtpTicks = 0;
+        retryScheduled = false;
+        awaitingRtpArrival = false;
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null || mc.interactionManager == null) return;
-
-        if (retryRtpTicks > 0) {
-            retryRtpTicks--;
-            if (retryRtpTicks == 0 && retryScheduled && !hasRtpMovedPlayer()) {
-                issueRtp(false);
-            }
-        }
 
         if (!isHoldingPickaxe()) {
             error("Hold a pickaxe in main hand.");
@@ -156,39 +158,32 @@ public class RtpMine extends Module {
             return;
         }
 
-        int y = mc.player.getBlockY();
-        int min = Math.min(topY.get(), bottomY.get());
-        int max = Math.max(topY.get(), bottomY.get());
-
-        if (y <= max && y >= min) {
-            if (rtpCooldown <= 0) {
-                issueRtp(true);
-                rtpCooldown = 40;
-            } else rtpCooldown--;
-            return;
-        }
+        handleRtpArrivalAndRetry();
+        if (awaitingRtpArrival) return;
 
         moveToBlockCenter();
         smoothLookDown();
 
-        BlockPos below = mc.player.getBlockPos().down();
-        BlockState belowState = mc.world.getBlockState(below);
-
-        if (avoidLiquids.get() && (isLiquidBlock(belowState) || hasLiquidInDrillPath(below))) {
-            if (!tryMineSafeSide(below)) {
-                if (rtpCooldown <= 0) {
-                    issueRtp(true);
-                    rtpCooldown = 40;
-                } else rtpCooldown--;
-            }
+        int triggerY = Math.max(targetTopY.get(), targetBottomY.get());
+        if (mc.player.getBlockY() <= triggerY) {
+            issueRtp(true);
             return;
         }
 
+        BlockPos below = mc.player.getBlockPos().down();
+        BlockState belowState = mc.world.getBlockState(below);
+
+        if (avoidLiquids.get()) {
+            int liquidDepth = nearestLiquidDepthInDrillPath(below, liquidCheckDepth.get());
+            if (liquidDepth != -1) {
+                // Side-mine whenever liquid is detected within scan depth.
+                tryMineSafeSide(below);
+                return;
+            }
+        }
+
         if (isUnsafeDrop(below)) {
-            if (rtpCooldown <= 0) {
-                issueRtp(true);
-                rtpCooldown = 40;
-            } else rtpCooldown--;
+            tryMineSafeSide(below);
             return;
         }
 
@@ -198,20 +193,36 @@ public class RtpMine extends Module {
         }
     }
 
+    private void handleRtpArrivalAndRetry() {
+        if (!awaitingRtpArrival) return;
+
+        if (hasRtpMovedPlayer()) {
+            awaitingRtpArrival = false;
+            retryScheduled = false;
+            retryRtpTicks = 0;
+            return;
+        }
+
+        if (retryRtpTicks > 0) {
+            retryRtpTicks--;
+            if (retryRtpTicks == 0 && retryScheduled) {
+                issueRtp(false);
+            }
+        }
+    }
+
     private void issueRtp(boolean allowRetry) {
         if (mc.player == null || mc.player.networkHandler == null) return;
 
-        String reg = region.get().trim();
+        String reg = region.get().trim().replaceFirst("^/+", "");
         String command = reg.isEmpty() ? "rtp" : "rtp " + reg;
 
         boolean sent = sendAsCommand(command);
-        if (!sent) {
-            String cmdWithSlash = "/" + command;
-            mc.player.networkHandler.sendChatMessage(cmdWithSlash);
-        }
+        if (!sent) mc.player.networkHandler.sendChatMessage("/" + command);
 
         info("RTP -> " + (reg.isEmpty() ? "default" : reg));
         rtpStartPos = mc.player.getBlockPos();
+        awaitingRtpArrival = true;
 
         retryScheduled = allowRetry;
         retryRtpTicks = allowRetry ? 20 : 0;
@@ -220,9 +231,9 @@ public class RtpMine extends Module {
     private boolean sendAsCommand(String commandNoSlash) {
         try {
             Object handler = mc.player.networkHandler;
-            for (String m : new String[] {"sendChatCommand", "sendCommand"}) {
+            for (String methodName : new String[] {"sendChatCommand", "sendCommand"}) {
                 try {
-                    Method method = handler.getClass().getMethod(m, String.class);
+                    Method method = handler.getClass().getMethod(methodName, String.class);
                     method.invoke(handler, commandNoSlash);
                     return true;
                 } catch (NoSuchMethodException ignored) {
@@ -234,7 +245,7 @@ public class RtpMine extends Module {
     }
 
     private boolean hasRtpMovedPlayer() {
-        if (mc.player == null || rtpStartPos == null) return true;
+        if (mc.player == null || rtpStartPos == null) return false;
         return mc.player.getBlockPos().getManhattanDistance(rtpStartPos) >= 2;
     }
 
@@ -267,6 +278,7 @@ public class RtpMine extends Module {
             BlockState sideState = mc.world.getBlockState(side);
             if (sideState.isAir()) continue;
             if (isLiquidBlock(sideState)) continue;
+
             mc.interactionManager.updateBlockBreakingProgress(side, dir.getOpposite());
             mc.player.swingHand(Hand.MAIN_HAND);
             return true;
@@ -274,15 +286,17 @@ public class RtpMine extends Module {
         return false;
     }
 
-    private boolean hasLiquidInDrillPath(BlockPos below) {
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dz = -1; dz <= 1; dz++) {
-                BlockPos p1 = below.add(dx, 0, dz);
-                BlockPos p2 = below.add(dx, -1, dz);
-                if (isLiquidBlock(mc.world.getBlockState(p1)) || isLiquidBlock(mc.world.getBlockState(p2))) return true;
+    private int nearestLiquidDepthInDrillPath(BlockPos below, int maxDepth) {
+        for (int depth = 0; depth <= maxDepth; depth++) {
+            int yOff = -depth;
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    BlockPos p = below.add(dx, yOff, dz);
+                    if (isLiquidBlock(mc.world.getBlockState(p))) return depth;
+                }
             }
         }
-        return false;
+        return -1;
     }
 
     private boolean isUnsafeDrop(BlockPos below) {
@@ -291,7 +305,6 @@ public class RtpMine extends Module {
         while (air <= maxSafeDrop.get()) {
             BlockState s = mc.world.getBlockState(cursor);
             if (!s.isAir()) return false;
-            if (isLiquidBlock(s)) return true;
             air++;
             cursor = cursor.down();
         }
