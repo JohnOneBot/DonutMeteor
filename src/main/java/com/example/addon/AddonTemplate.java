@@ -1,6 +1,7 @@
 package com.example.addon;
 
 import com.example.addon.commands.CommandExample;
+import com.example.addon.modules.AiMine;
 import com.example.addon.hud.HudExample;
 import com.example.addon.modules.FreecamModule;
 import com.example.addon.modules.FreecamRender;
@@ -30,6 +31,7 @@ public class AddonTemplate extends MeteorAddon {
         Modules.get().add(new FreecamRender());
         Modules.get().add(new SusChunkFinder());
         Modules.get().add(new LeaveOnFeature());
+        Modules.get().add(new AiMine());
 
         // Commands
         Commands.add(new CommandExample());
