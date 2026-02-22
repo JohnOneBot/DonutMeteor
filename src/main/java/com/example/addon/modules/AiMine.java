@@ -21,10 +21,7 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
 public class AiMine extends Module {
-    private enum Pattern {
-        Straight,
-        ZigZag
-    }
+    private enum Pattern { Straight, ZigZag }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
@@ -32,8 +29,7 @@ public class AiMine extends Module {
         .name("path-pattern")
         .description("How the miner advances through tunnels.")
         .defaultValue(Pattern.ZigZag)
-        .build()
-    );
+        .build());
 
     private final Setting<Integer> stepDistance = sgGeneral.add(new IntSetting.Builder()
         .name("step-distance")
@@ -41,8 +37,7 @@ public class AiMine extends Module {
         .defaultValue(5)
         .range(2, 12)
         .sliderRange(2, 10)
-        .build()
-    );
+        .build());
 
     private final Setting<Integer> zigZagWidth = sgGeneral.add(new IntSetting.Builder()
         .name("zigzag-width")
@@ -51,52 +46,45 @@ public class AiMine extends Module {
         .range(1, 5)
         .sliderRange(1, 4)
         .visible(() -> pattern.get() == Pattern.ZigZag)
-        .build()
-    );
+        .build());
 
     private final Setting<Double> turnSpeed = sgGeneral.add(new DoubleSetting.Builder()
         .name("turn-speed")
         .description("Max yaw change per tick for smoother movement.")
-        .defaultValue(5.0)
+        .defaultValue(4.0)
         .range(1.0, 30.0)
         .sliderRange(1.0, 15.0)
-        .build()
-    );
+        .build());
 
     private final Setting<Boolean> carveTunnel = sgGeneral.add(new BoolSetting.Builder()
         .name("carve-tunnel")
         .description("Allow selecting waypoints inside stone/deepslate and mining toward them.")
         .defaultValue(true)
-        .build()
-    );
+        .build());
 
     private final Setting<Boolean> avoidLiquids = sgGeneral.add(new BoolSetting.Builder()
         .name("avoid-liquids")
         .description("Avoid paths with nearby lava or water.")
         .defaultValue(true)
-        .build()
-    );
+        .build());
 
     private final Setting<Boolean> avoidFalls = sgGeneral.add(new BoolSetting.Builder()
         .name("avoid-caves-falls")
         .description("Avoid blocks that lead into big drops/caves.")
         .defaultValue(true)
-        .build()
-    );
+        .build());
 
     private final Setting<Boolean> avoidGravityBlocks = sgGeneral.add(new BoolSetting.Builder()
         .name("avoid-gravel-sand")
         .description("Avoid mining into gravel/sand pockets.")
         .defaultValue(true)
-        .build()
-    );
+        .build());
 
     private final Setting<Boolean> autoMineFront = sgGeneral.add(new BoolSetting.Builder()
         .name("mine-front-block")
         .description("Auto mine the front block(s) if path is blocked.")
         .defaultValue(true)
-        .build()
-    );
+        .build());
 
     private final Setting<Integer> warnIntervalTicks = sgGeneral.add(new IntSetting.Builder()
         .name("no-path-warn-interval")
@@ -104,10 +92,11 @@ public class AiMine extends Module {
         .defaultValue(40)
         .range(5, 200)
         .sliderRange(10, 100)
-        .build()
-    );
+        .build());
 
     private BlockPos waypoint;
+    private BlockPos miningTarget;
+    private Direction miningFace = Direction.UP;
     private boolean zigRight = true;
     private int nextWarnTick;
 
@@ -118,6 +107,8 @@ public class AiMine extends Module {
     @Override
     public void onActivate() {
         waypoint = null;
+        miningTarget = null;
+        miningFace = Direction.UP;
         zigRight = true;
         nextWarnTick = 0;
     }
@@ -125,14 +116,16 @@ public class AiMine extends Module {
     @Override
     public void onDeactivate() {
         releaseMovement();
+        if (mc.interactionManager != null) mc.interactionManager.cancelBlockBreaking();
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.world == null || mc.options == null) return;
 
         BlockPos feet = mc.player.getBlockPos();
         Vec3d playerPos = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
+
         if (waypoint == null || playerPos.squaredDistanceTo(Vec3d.ofCenter(waypoint)) < 1.0) {
             waypoint = pickNextWaypoint(feet);
             if (waypoint == null) {
@@ -145,17 +138,17 @@ public class AiMine extends Module {
             }
         }
 
-        if (autoMineFront.get()) mineBlockingBlocks(feet);
-        moveToward(waypoint);
+        if (autoMineFront.get()) updateMiningTarget(feet);
+
+        boolean activelyMining = mineCurrentTarget();
+        moveToward(waypoint, activelyMining);
     }
 
     private BlockPos pickNextWaypoint(BlockPos from) {
         Vec3d look = Vec3d.fromPolar(0f, mc.player.getYaw()).normalize();
         int fx = (int) Math.signum(look.x);
         int fz = (int) Math.signum(look.z);
-
-        if (Math.abs(look.x) < Math.abs(look.z)) fx = 0;
-        else fz = 0;
+        if (Math.abs(look.x) < Math.abs(look.z)) fx = 0; else fz = 0;
 
         int sx = -fz;
         int sz = fx;
@@ -177,18 +170,14 @@ public class AiMine extends Module {
                 if (isTraversableOrCarvable(candidate)) return candidate;
             }
         }
-
         return null;
     }
 
     private boolean isTraversableOrCarvable(BlockPos pos) {
-        if (isSafeStandingPos(pos)) return true;
-        return carveTunnel.get() && canCarveTunnelAt(pos);
+        return isSafeStandingPos(pos) || (carveTunnel.get() && canCarveTunnelAt(pos));
     }
 
     private boolean isSafeStandingPos(BlockPos pos) {
-        if (mc.world == null) return false;
-
         BlockState feet = mc.world.getBlockState(pos);
         BlockState head = mc.world.getBlockState(pos.up());
         BlockState floor = mc.world.getBlockState(pos.down());
@@ -203,10 +192,7 @@ public class AiMine extends Module {
             }
         }
 
-        if (avoidGravityBlocks.get()) {
-            BlockState above = mc.world.getBlockState(pos.up(2));
-            if (isGravityBlock(above.getBlock())) return false;
-        }
+        if (avoidGravityBlocks.get() && isGravityBlock(mc.world.getBlockState(pos.up(2)).getBlock())) return false;
 
         if (avoidFalls.get()) {
             int airDepth = 0;
@@ -228,7 +214,6 @@ public class AiMine extends Module {
 
         if (!isMineableSolid(feet) || !isMineableSolid(head)) return false;
         if (floor.isAir()) return false;
-
         if (avoidLiquids.get() && (touchesLiquid(pos) || touchesLiquid(pos.up()))) return false;
         if (avoidGravityBlocks.get() && isGravityBlock(mc.world.getBlockState(pos.up(2)).getBlock())) return false;
 
@@ -236,8 +221,7 @@ public class AiMine extends Module {
     }
 
     private boolean isMineableSolid(BlockState state) {
-        if (state.isAir()) return false;
-        if (!state.getFluidState().isEmpty()) return false;
+        if (state.isAir() || !state.getFluidState().isEmpty()) return false;
         Block block = state.getBlock();
         return block != Blocks.BEDROCK && block != Blocks.BARRIER;
     }
@@ -246,25 +230,52 @@ public class AiMine extends Module {
         return block == Blocks.GRAVEL || block == Blocks.SAND || block == Blocks.RED_SAND;
     }
 
-    private void mineBlockingBlocks(BlockPos from) {
+    private void updateMiningTarget(BlockPos from) {
         Vec3d look = Vec3d.fromPolar(mc.player.getPitch(), mc.player.getYaw()).normalize();
         BlockPos front = from.add((int) Math.signum(look.x), 0, (int) Math.signum(look.z));
 
-        mineIfNeeded(front, from);
-        mineIfNeeded(front.up(), from);
+        if (isBreakCandidate(front)) {
+            setMiningTarget(front, from);
+            return;
+        }
+
+        BlockPos headFront = front.up();
+        if (isBreakCandidate(headFront)) {
+            setMiningTarget(headFront, from);
+            return;
+        }
+
+        miningTarget = null;
     }
 
-    private void mineIfNeeded(BlockPos target, BlockPos from) {
-        BlockState state = mc.world.getBlockState(target);
-        if (state.isAir() || !state.getFluidState().isEmpty()) return;
-        if (avoidLiquids.get() && touchesLiquid(target)) return;
-        if (avoidGravityBlocks.get() && isGravityBlock(state.getBlock())) return;
-
-        Direction face = directionToward(from, target);
-        if (mc.interactionManager != null) {
-            mc.interactionManager.updateBlockBreakingProgress(target, face);
-            mc.player.swingHand(Hand.MAIN_HAND);
+    private void setMiningTarget(BlockPos target, BlockPos from) {
+        if (!target.equals(miningTarget) && mc.interactionManager != null) {
+            mc.interactionManager.cancelBlockBreaking();
         }
+        miningTarget = target;
+        miningFace = directionToward(from, target);
+    }
+
+    private boolean isBreakCandidate(BlockPos pos) {
+        BlockState state = mc.world.getBlockState(pos);
+        if (state.isAir() || !state.getFluidState().isEmpty()) return false;
+        if (avoidLiquids.get() && touchesLiquid(pos)) return false;
+        if (avoidGravityBlocks.get() && isGravityBlock(state.getBlock())) return false;
+        return true;
+    }
+
+    private boolean mineCurrentTarget() {
+        if (miningTarget == null || mc.interactionManager == null) return false;
+
+        BlockState state = mc.world.getBlockState(miningTarget);
+        if (state.isAir() || !state.getFluidState().isEmpty()) {
+            miningTarget = null;
+            return false;
+        }
+
+        mc.interactionManager.updateBlockBreakingProgress(miningTarget, miningFace);
+        mc.player.swingHand(Hand.MAIN_HAND);
+        return true;
     }
 
     private Direction directionToward(BlockPos from, BlockPos to) {
@@ -283,7 +294,7 @@ public class AiMine extends Module {
         return false;
     }
 
-    private void moveToward(BlockPos target) {
+    private void moveToward(BlockPos target, boolean activelyMining) {
         Vec3d targetPos = Vec3d.ofCenter(target);
         Vec3d playerPos = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
 
@@ -296,14 +307,23 @@ public class AiMine extends Module {
         float step = (float) Math.min(Math.abs(delta), turnSpeed.get());
         mc.player.setYaw(currentYaw + Math.copySign(step, delta));
 
-        setKey(mc.options.forwardKey, true);
-        setKey(mc.options.backKey, false);
         setKey(mc.options.leftKey, false);
         setKey(mc.options.rightKey, false);
 
+        boolean sharplyTurning = Math.abs(delta) > 70f;
+        boolean holdPositionForMine = activelyMining && Math.abs(delta) > 25f;
+
+        setKey(mc.options.forwardKey, !sharplyTurning && !holdPositionForMine);
+        setKey(mc.options.backKey, false);
+
+        if (sharplyTurning) {
+            setKey(mc.options.leftKey, delta < 0);
+            setKey(mc.options.rightKey, delta > 0);
+        }
+
         BlockPos ahead = mc.player.getBlockPos().offset(mc.player.getHorizontalFacing());
         boolean obstacle = !mc.world.getBlockState(ahead).isAir() && mc.world.getBlockState(ahead.up()).isAir();
-        setKey(mc.options.jumpKey, obstacle);
+        setKey(mc.options.jumpKey, obstacle && !activelyMining);
     }
 
     private void releaseMovement() {
