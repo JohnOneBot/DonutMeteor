@@ -20,14 +20,14 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
 public class AiMine extends Module {
-    private enum Pattern { Straight, ZigZag }
+    private enum Pattern { Straight, Diagonal }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
     private final Setting<Pattern> pattern = sgGeneral.add(new EnumSetting.Builder<Pattern>()
         .name("path-pattern")
-        .description("How the miner advances through tunnels.")
-        .defaultValue(Pattern.ZigZag)
+        .description("Straight forward lanes or alternating diagonal lanes.")
+        .defaultValue(Pattern.Diagonal)
         .build());
 
     private final Setting<Integer> stepDistance = sgGeneral.add(new IntSetting.Builder()
@@ -40,10 +40,10 @@ public class AiMine extends Module {
 
     private final Setting<Double> turnSpeed = sgGeneral.add(new DoubleSetting.Builder()
         .name("turn-speed")
-        .description("Max yaw change per tick for smoother movement.")
-        .defaultValue(3.0)
-        .range(1.0, 12.0)
-        .sliderRange(1.0, 8.0)
+        .description("Max yaw change per tick. Higher feels smoother/less robotic.")
+        .defaultValue(6.0)
+        .range(1.0, 20.0)
+        .sliderRange(2.0, 12.0)
         .build());
 
     private final Setting<Boolean> carveTunnel = sgGeneral.add(new BoolSetting.Builder()
@@ -60,7 +60,7 @@ public class AiMine extends Module {
 
     private final Setting<Boolean> avoidFalls = sgGeneral.add(new BoolSetting.Builder()
         .name("avoid-caves-falls")
-        .description("Avoid blocks that lead into big drops/caves.")
+        .description("Avoid blocks that lead into caves/drops.")
         .defaultValue(true)
         .build());
 
@@ -72,10 +72,18 @@ public class AiMine extends Module {
 
     private final Setting<Integer> warnIntervalTicks = sgGeneral.add(new IntSetting.Builder()
         .name("no-path-warn-interval")
-        .description("Ticks between 'no path' warnings to avoid spam.")
+        .description("Ticks between 'no path' warnings.")
         .defaultValue(40)
         .range(5, 200)
         .sliderRange(10, 100)
+        .build());
+
+    private final Setting<Integer> stuckTicksLimit = sgGeneral.add(new IntSetting.Builder()
+        .name("stuck-ticks")
+        .description("Ticks with tiny movement before unstick behavior triggers.")
+        .defaultValue(20)
+        .range(5, 80)
+        .sliderRange(10, 40)
         .build());
 
     private BlockPos waypoint;
@@ -83,10 +91,14 @@ public class AiMine extends Module {
     private int nextWarnTick;
 
     private float baseYaw;
-    private boolean zigRight;
+    private boolean diagRight;
+
+    private Vec3d lastPos;
+    private int stuckTicks;
+    private int jumpTicks;
 
     public AiMine() {
-        super(AddonTemplate.CATEGORY, "Ai Mine", "Hazard-aware auto miner that follows straight or zigzag lanes.");
+        super(AddonTemplate.CATEGORY, "Ai Mine", "Hazard-aware auto miner that follows straight/diagonal lanes.");
     }
 
     @Override
@@ -94,9 +106,11 @@ public class AiMine extends Module {
         waypoint = null;
         miningTarget = null;
         nextWarnTick = 0;
-
         baseYaw = mc.player != null ? mc.player.getYaw() : 0f;
-        zigRight = true;
+        diagRight = true;
+        lastPos = mc.player != null ? new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ()) : null;
+        stuckTicks = 0;
+        jumpTicks = 0;
     }
 
     @Override
@@ -109,16 +123,22 @@ public class AiMine extends Module {
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null || mc.options == null) return;
 
-        if (isImmediateDanger(mc.player.getBlockPos())) {
-            warning("Danger detected (lava/cave/fall). Stopping Ai Mine.");
-            toggle();
-            return;
-        }
-
         BlockPos feet = mc.player.getBlockPos();
         Vec3d playerPos = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
 
-        if (waypoint == null || playerPos.squaredDistanceTo(Vec3d.ofCenter(waypoint)) < 1.0) {
+        if (isImmediateDanger(feet)) {
+            BlockPos escape = findEscapeWaypoint(feet);
+            if (escape != null) waypoint = escape;
+            else {
+                warning("Danger detected (lava/cave/fall). Stopping Ai Mine.");
+                toggle();
+                return;
+            }
+        }
+
+        updateStuck(playerPos);
+
+        if (waypoint == null || playerPos.squaredDistanceTo(Vec3d.ofCenter(waypoint)) < 1.2 || stuckTicks > stuckTicksLimit.get()) {
             waypoint = pickNextWaypoint(feet);
             if (waypoint == null) {
                 if (mc.player.age >= nextWarnTick) {
@@ -132,47 +152,57 @@ public class AiMine extends Module {
 
         boolean needsMining = updateMiningTarget(feet);
         setKey(mc.options.attackKey, needsMining);
+
+        if (stuckTicks > stuckTicksLimit.get()) jumpTicks = 6;
         moveToward(waypoint, needsMining);
     }
 
+    private void updateStuck(Vec3d pos) {
+        if (lastPos == null) {
+            lastPos = pos;
+            return;
+        }
+
+        if (pos.squaredDistanceTo(lastPos) < 0.01) stuckTicks++;
+        else stuckTicks = 0;
+
+        lastPos = pos;
+    }
+
     private BlockPos pickNextWaypoint(BlockPos from) {
-        float targetYaw = getTargetYaw();
-        Direction forward = yawToCardinal(targetYaw);
+        int[] step = laneStep();
 
         for (int d = stepDistance.get(); d <= stepDistance.get() + 4; d++) {
-            BlockPos candidate = from.offset(forward, d);
+            BlockPos candidate = from.add(step[0] * d, 0, step[1] * d);
             if (isTraversableOrCarvable(candidate)) {
-                if (pattern.get() == Pattern.ZigZag) zigRight = !zigRight;
+                if (pattern.get() == Pattern.Diagonal) diagRight = !diagRight;
                 return candidate;
             }
         }
 
-        Direction left = forward.rotateYCounterclockwise();
-        Direction right = forward.rotateYClockwise();
-
+        // Mine around hazards: try side-step candidates before giving up.
+        int sx = -step[1];
+        int sz = step[0];
         for (int d = 2; d <= 6; d++) {
-            BlockPos c1 = from.offset(left, d);
-            if (isTraversableOrCarvable(c1)) return c1;
-            BlockPos c2 = from.offset(right, d);
-            if (isTraversableOrCarvable(c2)) return c2;
+            BlockPos left = from.add(sx * d, 0, sz * d);
+            if (isTraversableOrCarvable(left)) return left;
+            BlockPos right = from.add(-sx * d, 0, -sz * d);
+            if (isTraversableOrCarvable(right)) return right;
         }
 
         return null;
     }
 
-    private float getTargetYaw() {
-        if (pattern.get() == Pattern.Straight) return baseYaw;
-        return baseYaw + (zigRight ? 45f : -45f);
-    }
+    private int[] laneStep() {
+        float yaw = baseYaw;
+        if (pattern.get() == Pattern.Diagonal) yaw = baseYaw + (diagRight ? 45f : -45f);
 
-    private Direction yawToCardinal(float yaw) {
-        int i = MathHelper.floor((yaw / 90.0f) + 0.5f) & 3;
-        return switch (i) {
-            case 0 -> Direction.SOUTH;
-            case 1 -> Direction.WEST;
-            case 2 -> Direction.NORTH;
-            default -> Direction.EAST;
-        };
+        double r = Math.toRadians(yaw);
+        int dx = (int) Math.round(-Math.sin(r));
+        int dz = (int) Math.round(Math.cos(r));
+
+        if (dx == 0 && dz == 0) dz = 1;
+        return new int[] { dx, dz };
     }
 
     private boolean isTraversableOrCarvable(BlockPos pos) {
@@ -188,7 +218,6 @@ public class AiMine extends Module {
         if (floor.isAir() || !floor.isOpaque()) return false;
 
         if (avoidLiquids.get() && (touchesLiquid(pos) || floor.isOf(Blocks.LAVA) || floor.isOf(Blocks.WATER))) return false;
-
         if (avoidGravityBlocks.get() && isGravityBlock(mc.world.getBlockState(pos.up(2)).getBlock())) return false;
 
         if (avoidFalls.get()) {
@@ -242,6 +271,20 @@ public class AiMine extends Module {
             return true;
         }
 
+        // If stuck, try mining around the obstacle to unstick.
+        if (stuckTicks > stuckTicksLimit.get()) {
+            BlockPos sideL = from.offset(forward.rotateYCounterclockwise());
+            if (isBreakCandidate(sideL)) {
+                miningTarget = sideL;
+                return true;
+            }
+            BlockPos sideR = from.offset(forward.rotateYClockwise());
+            if (isBreakCandidate(sideR)) {
+                miningTarget = sideR;
+                return true;
+            }
+        }
+
         miningTarget = null;
         return false;
     }
@@ -270,8 +313,8 @@ public class AiMine extends Module {
             if (below.isOf(Blocks.LAVA) || below.isOf(Blocks.WATER)) return true;
 
             for (Direction d : Direction.Type.HORIZONTAL) {
-                BlockState s = mc.world.getBlockState(feet.offset(d));
-                if (s.isOf(Blocks.LAVA) || s.isOf(Blocks.WATER)) return true;
+                BlockState near = mc.world.getBlockState(feet.offset(d));
+                if (near.isOf(Blocks.LAVA) || near.isOf(Blocks.WATER)) return true;
             }
         }
 
@@ -288,6 +331,14 @@ public class AiMine extends Module {
         return false;
     }
 
+    private BlockPos findEscapeWaypoint(BlockPos from) {
+        for (Direction d : Direction.Type.HORIZONTAL) {
+            BlockPos c = from.offset(d, 2);
+            if (isSafeStandingPos(c)) return c;
+        }
+        return null;
+    }
+
     private void moveToward(BlockPos target, boolean activelyMining) {
         Vec3d targetPos = Vec3d.ofCenter(target);
         Vec3d playerPos = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
@@ -298,21 +349,27 @@ public class AiMine extends Module {
 
         float currentYaw = mc.player.getYaw();
         float delta = MathHelper.wrapDegrees(desiredYaw - currentYaw);
-        float step = (float) Math.min(Math.abs(delta), turnSpeed.get());
-        mc.player.setYaw(currentYaw + Math.copySign(step, delta));
 
-        // Smooth, legit-looking movement: no rapid left/right wiggle spam.
+        float step = (float) Math.min(Math.abs(delta), turnSpeed.get());
+        float smoothFactor = 0.55f;
+        mc.player.setYaw(currentYaw + Math.copySign(step * smoothFactor, delta));
+
         setKey(mc.options.leftKey, false);
         setKey(mc.options.rightKey, false);
         setKey(mc.options.backKey, false);
 
-        boolean alignEnough = Math.abs(delta) < 50f;
-        boolean pauseForMine = activelyMining && Math.abs(delta) > 18f;
+        boolean alignEnough = Math.abs(delta) < 65f;
+        boolean pauseForMine = activelyMining && Math.abs(delta) > 30f;
         setKey(mc.options.forwardKey, alignEnough && !pauseForMine);
 
-        BlockPos ahead = mc.player.getBlockPos().offset(mc.player.getHorizontalFacing());
-        boolean obstacle = !mc.world.getBlockState(ahead).isAir() && mc.world.getBlockState(ahead.up()).isAir();
-        setKey(mc.options.jumpKey, obstacle && !activelyMining);
+        if (jumpTicks > 0) {
+            setKey(mc.options.jumpKey, true);
+            jumpTicks--;
+        } else {
+            BlockPos ahead = mc.player.getBlockPos().offset(mc.player.getHorizontalFacing());
+            boolean obstacle = !mc.world.getBlockState(ahead).isAir() && mc.world.getBlockState(ahead.up()).isAir();
+            setKey(mc.options.jumpKey, obstacle && !activelyMining);
+        }
     }
 
     private void releaseMovement() {
