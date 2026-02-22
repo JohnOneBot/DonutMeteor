@@ -14,7 +14,6 @@ import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.option.KeyBinding;
-import net.minecraft.util.Hand;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.MathHelper;
@@ -90,7 +89,6 @@ public class AiMine extends Module {
 
     private BlockPos waypoint;
     private BlockPos miningTarget;
-    private Direction miningFace = Direction.UP;
     private boolean zigRight = true;
     private int nextWarnTick;
 
@@ -102,7 +100,6 @@ public class AiMine extends Module {
     public void onActivate() {
         waypoint = null;
         miningTarget = null;
-        miningFace = Direction.UP;
         zigRight = true;
         nextWarnTick = 0;
     }
@@ -110,7 +107,7 @@ public class AiMine extends Module {
     @Override
     public void onDeactivate() {
         releaseMovement();
-        if (mc.interactionManager != null) mc.interactionManager.cancelBlockBreaking();
+        if (mc.options != null) setKey(mc.options.attackKey, false);
     }
 
     @EventHandler
@@ -132,10 +129,9 @@ public class AiMine extends Module {
             }
         }
 
-        updateMiningTarget(feet);
-
-        boolean activelyMining = mineCurrentTarget();
-        moveToward(waypoint, activelyMining);
+        boolean needsMining = updateMiningTarget(feet);
+        setKey(mc.options.attackKey, needsMining);
+        moveToward(waypoint, needsMining);
     }
 
     private BlockPos pickNextWaypoint(BlockPos from) {
@@ -224,32 +220,29 @@ public class AiMine extends Module {
         return block == Blocks.GRAVEL || block == Blocks.SAND || block == Blocks.RED_SAND;
     }
 
-    private void updateMiningTarget(BlockPos from) {
+    private boolean updateMiningTarget(BlockPos from) {
         Direction forward = mc.player.getHorizontalFacing();
 
         // Target eye-level front first (more natural, avoids down-staircase with 3x3 picks).
         BlockPos headFront = from.up().offset(forward);
         if (isBreakCandidate(headFront)) {
-            setMiningTarget(headFront, forward);
-            return;
+            setMiningTarget(headFront);
+            return true;
         }
 
         // Then clear feet-level front to keep a 2-high tunnel open.
         BlockPos front = from.offset(forward);
         if (isBreakCandidate(front)) {
-            setMiningTarget(front, forward);
-            return;
+            setMiningTarget(front);
+            return true;
         }
 
         miningTarget = null;
+        return false;
     }
 
-    private void setMiningTarget(BlockPos target, Direction forward) {
-        if (!target.equals(miningTarget) && mc.interactionManager != null) {
-            mc.interactionManager.cancelBlockBreaking();
-        }
+    private void setMiningTarget(BlockPos target) {
         miningTarget = target;
-        miningFace = forward;
     }
 
     private boolean isBreakCandidate(BlockPos pos) {
@@ -257,20 +250,6 @@ public class AiMine extends Module {
         if (state.isAir() || !state.getFluidState().isEmpty()) return false;
         if (avoidLiquids.get() && touchesLiquid(pos)) return false;
         if (avoidGravityBlocks.get() && isGravityBlock(state.getBlock())) return false;
-        return true;
-    }
-
-    private boolean mineCurrentTarget() {
-        if (miningTarget == null || mc.interactionManager == null) return false;
-
-        BlockState state = mc.world.getBlockState(miningTarget);
-        if (state.isAir() || !state.getFluidState().isEmpty()) {
-            miningTarget = null;
-            return false;
-        }
-
-        mc.interactionManager.updateBlockBreakingProgress(miningTarget, miningFace);
-        mc.player.swingHand(Hand.MAIN_HAND);
         return true;
     }
 
