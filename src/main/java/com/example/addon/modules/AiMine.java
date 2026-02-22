@@ -115,7 +115,8 @@ public class AiMine extends Module {
         if (mc.player == null || mc.world == null) return;
 
         BlockPos feet = mc.player.getBlockPos();
-        if (waypoint == null || mc.player.getPos().squaredDistanceTo(Vec3d.ofCenter(waypoint)) < 1.0) {
+        Vec3d playerPos = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
+        if (waypoint == null || playerPos.squaredDistanceTo(Vec3d.ofCenter(waypoint)) < 1.0) {
             waypoint = pickNextWaypoint(feet);
             if (waypoint == null) {
                 warning("No safe path found. Stopping movement.");
@@ -228,7 +229,7 @@ public class AiMine extends Module {
 
     private void moveToward(BlockPos target) {
         Vec3d tp = Vec3d.ofCenter(target);
-        Vec3d pp = mc.player.getPos();
+        Vec3d pp = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ());
 
         double dx = tp.x - pp.x;
         double dz = tp.z - pp.z;
