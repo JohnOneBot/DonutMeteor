@@ -231,29 +231,31 @@ public class AiMine extends Module {
     }
 
     private void updateMiningTarget(BlockPos from) {
-        Vec3d look = Vec3d.fromPolar(mc.player.getPitch(), mc.player.getYaw()).normalize();
-        BlockPos front = from.add((int) Math.signum(look.x), 0, (int) Math.signum(look.z));
+        Direction forward = mc.player.getHorizontalFacing();
+        BlockPos front = from.offset(forward);
 
+        // Prefer the direct front block at feet level to avoid staircase-down behavior.
         if (isBreakCandidate(front)) {
-            setMiningTarget(front, from);
+            setMiningTarget(front, forward);
             return;
         }
 
+        // Only clear head-space if needed after front block is already open.
         BlockPos headFront = front.up();
-        if (isBreakCandidate(headFront)) {
-            setMiningTarget(headFront, from);
+        if (mc.world.getBlockState(front).isAir() && isBreakCandidate(headFront)) {
+            setMiningTarget(headFront, forward);
             return;
         }
 
         miningTarget = null;
     }
 
-    private void setMiningTarget(BlockPos target, BlockPos from) {
+    private void setMiningTarget(BlockPos target, Direction forward) {
         if (!target.equals(miningTarget) && mc.interactionManager != null) {
             mc.interactionManager.cancelBlockBreaking();
         }
         miningTarget = target;
-        miningFace = directionToward(from, target);
+        miningFace = forward;
     }
 
     private boolean isBreakCandidate(BlockPos pos) {
@@ -276,14 +278,6 @@ public class AiMine extends Module {
         mc.interactionManager.updateBlockBreakingProgress(miningTarget, miningFace);
         mc.player.swingHand(Hand.MAIN_HAND);
         return true;
-    }
-
-    private Direction directionToward(BlockPos from, BlockPos to) {
-        int dx = Integer.compare(to.getX(), from.getX());
-        int dz = Integer.compare(to.getZ(), from.getZ());
-        if (Math.abs(dx) > Math.abs(dz)) return dx >= 0 ? Direction.EAST : Direction.WEST;
-        if (dz != 0) return dz >= 0 ? Direction.SOUTH : Direction.NORTH;
-        return Direction.UP;
     }
 
     private boolean touchesLiquid(BlockPos pos) {
