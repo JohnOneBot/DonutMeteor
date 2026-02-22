@@ -80,12 +80,6 @@ public class AiMine extends Module {
         .defaultValue(true)
         .build());
 
-    private final Setting<Boolean> autoMineFront = sgGeneral.add(new BoolSetting.Builder()
-        .name("mine-front-block")
-        .description("Auto mine the front block(s) if path is blocked.")
-        .defaultValue(true)
-        .build());
-
     private final Setting<Integer> warnIntervalTicks = sgGeneral.add(new IntSetting.Builder()
         .name("no-path-warn-interval")
         .description("Ticks between 'no path' warnings to avoid spam.")
@@ -138,7 +132,7 @@ public class AiMine extends Module {
             }
         }
 
-        if (autoMineFront.get()) updateMiningTarget(feet);
+        updateMiningTarget(feet);
 
         boolean activelyMining = mineCurrentTarget();
         moveToward(waypoint, activelyMining);
@@ -232,18 +226,18 @@ public class AiMine extends Module {
 
     private void updateMiningTarget(BlockPos from) {
         Direction forward = mc.player.getHorizontalFacing();
-        BlockPos front = from.offset(forward);
 
-        // Prefer the direct front block at feet level to avoid staircase-down behavior.
-        if (isBreakCandidate(front)) {
-            setMiningTarget(front, forward);
+        // Target eye-level front first (more natural, avoids down-staircase with 3x3 picks).
+        BlockPos headFront = from.up().offset(forward);
+        if (isBreakCandidate(headFront)) {
+            setMiningTarget(headFront, forward);
             return;
         }
 
-        // Only clear head-space if needed after front block is already open.
-        BlockPos headFront = front.up();
-        if (mc.world.getBlockState(front).isAir() && isBreakCandidate(headFront)) {
-            setMiningTarget(headFront, forward);
+        // Then clear feet-level front to keep a 2-high tunnel open.
+        BlockPos front = from.offset(forward);
+        if (isBreakCandidate(front)) {
+            setMiningTarget(front, forward);
             return;
         }
 
