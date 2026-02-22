@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "addon-template",
   "version": "${version}",
-  "name": "Addon Template",
-  "description": "An addon template for Meteor Client addons.",
+  "name": "Donut+",
+  "description": "Donut+ Meteor By Jaydenn",
   "authors": [
-    "seasnail"
+    "Jaydenn"
   ],
   "contact": {
     "sources": "https://github.com/MeteorDevelopment/meteor-addon-template"
@@ -21,7 +21,7 @@
     "addon-template.mixins.json"
   ],
   "custom": {
-    "meteor-client:color": "225,25,25",
+    "meteor-client:color": "255,128,0",
     "modmenu": {
       "parent": {
         "id": "meteor-client"
@@ -30,7 +30,9 @@
   },
   "depends": {
     "java": ">=21",
-    "minecraft": ["${mc_version}"],
+    "minecraft": [
+      "${mc_version}"
+    ],
     "meteor-client": "*"
   }
 }
